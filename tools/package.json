@@ -1,0 +1,9 @@
+{
+  "name": "octiron-tools",
+  "private": true,
+  "type": "module",
+  "description": "Local tooling: headless-browser screenshots for visual verification.",
+  "dependencies": {
+    "playwright": "^1"
+  }
+}

@@ -1,0 +1,5 @@
+# wgpu's WebGPU backend uses web-sys APIs still gated behind this cfg. Required
+# to compile the WebGPU path for the web target; harmless when only WebGL2 is
+# used at runtime.
+[target.wasm32-unknown-unknown]
+rustflags = ["--cfg=web_sys_unstable_apis"]

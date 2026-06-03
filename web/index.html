@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Octiron — a from-scratch 2D game engine</title>
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: radial-gradient(1100px 520px at 50% -8%, #171c2a, #0b0d12 62%);
+        color: #c8ccd6;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        padding: 0 1.2rem 4rem;
+      }
+      header {
+        text-align: center;
+        padding: 3.2rem 0 1.2rem;
+      }
+      h1 {
+        margin: 0;
+        font-size: 2rem;
+        font-weight: 700;
+        letter-spacing: 0.4em;
+        color: #e6e9f2;
+      }
+      .tag {
+        margin: 0.7rem 0 0;
+        font-size: 0.86rem;
+        color: #8d93a6;
+      }
+      .tag b {
+        color: #7fd2ff;
+        font-weight: 600;
+      }
+      .grid {
+        max-width: 1040px;
+        margin: 1.6rem auto 0;
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+        gap: 1.1rem;
+      }
+      .card {
+        display: block;
+        text-decoration: none;
+        color: inherit;
+        background: #11141d;
+        border: 1px solid #1f2433;
+        border-radius: 12px;
+        overflow: hidden;
+        transition: transform 0.16s ease, border-color 0.16s ease,
+          box-shadow 0.16s ease;
+      }
+      .card:hover {
+        transform: translateY(-4px);
+        border-color: #34507a;
+        box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
+      }
+      .card img {
+        display: block;
+        width: 100%;
+        aspect-ratio: 4 / 3;
+        object-fit: cover;
+        background: #11131a;
+        border-bottom: 1px solid #1f2433;
+      }
+      .meta {
+        padding: 0.85rem 1rem 1rem;
+      }
+      .meta h2 {
+        margin: 0;
+        font-size: 1.05rem;
+        font-weight: 600;
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        gap: 0.5rem;
+      }
+      .genre {
+        font-size: 0.72rem;
+        color: #6f7689;
+        font-weight: 500;
+        letter-spacing: 0.04em;
+      }
+      .ctrl {
+        margin: 0.5rem 0 0;
+        font-size: 0.78rem;
+        color: #9aa0b2;
+      }
+      footer {
+        max-width: 1040px;
+        margin: 2.4rem auto 0;
+        text-align: center;
+        font-size: 0.76rem;
+        color: #5d6376;
+        line-height: 1.7;
+      }
+      footer code {
+        color: #8d93a6;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>OCTIRON</h1>
+      <p class="tag">
+        A from-scratch 2D game engine — <b>five games, one engine</b>, written in
+        Rust, run as WebAssembly via wgpu.
+      </p>
+    </header>
+
+    <main class="grid">
+      <a class="card" href="play.html?game=demo">
+        <img src="thumbs/demo.png" alt="Pong" loading="lazy" />
+        <div class="meta">
+          <h2>Pong <span class="genre">PADDLE DUEL</span></h2>
+          <p class="ctrl">Left W/S · Right ↑/↓</p>
+        </div>
+      </a>
+      <a class="card" href="play.html?game=invaders">
+        <img src="thumbs/invaders.png" alt="Invaders" loading="lazy" />
+        <div class="meta">
+          <h2>Invaders <span class="genre">SHOOTER</span></h2>
+          <p class="ctrl">Move ←/→ · Fire Space</p>
+        </div>
+      </a>
+      <a class="card" href="play.html?game=snake">
+        <img src="thumbs/snake.png" alt="Snake" loading="lazy" />
+        <div class="meta">
+          <h2>Snake <span class="genre">GRID ARCADE</span></h2>
+          <p class="ctrl">Arrows / WASD</p>
+        </div>
+      </a>
+      <a class="card" href="play.html?game=breakout">
+        <img src="thumbs/breakout.png" alt="Breakout" loading="lazy" />
+        <div class="meta">
+          <h2>Breakout <span class="genre">BRICK BREAKER</span></h2>
+          <p class="ctrl">Move ←/→</p>
+        </div>
+      </a>
+      <a class="card" href="play.html?game=flappy">
+        <img src="thumbs/flappy.png" alt="Flappy" loading="lazy" />
+        <div class="meta">
+          <h2>Flappy <span class="genre">ONE-BUTTON</span></h2>
+          <p class="ctrl">Flap with Space</p>
+        </div>
+      </a>
+    </main>
+
+    <footer>
+      Built with <code>wgpu</code> (WebGPU / WebGL2) + <code>hecs</code> ECS.
+      <br />
+      Each game is a crate under <code>examples/</code>; build with
+      <code>./build.sh all</code>.
+    </footer>
+  </body>
+</html>

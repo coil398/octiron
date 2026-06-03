@@ -1,0 +1,6 @@
+/target
+/web/pkg
+/tools/node_modules
+/tools/*.png
+/tools/venv
+/.serena

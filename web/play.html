@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Octiron — play</title>
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+        background: radial-gradient(1200px 600px at 50% -10%, #161a26, #0b0d12 60%);
+        color: #c8ccd6;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+      header {
+        display: flex;
+        align-items: baseline;
+        gap: 1rem;
+        padding: 0.9rem 1.2rem;
+        border-bottom: 1px solid #1b1f2b;
+      }
+      .back {
+        color: #7fd2ff;
+        text-decoration: none;
+        font-size: 0.85rem;
+        font-weight: 600;
+      }
+      .back:hover {
+        text-decoration: underline;
+      }
+      #title {
+        font-size: 0.95rem;
+        font-weight: 600;
+        letter-spacing: 0.06em;
+      }
+      .hint {
+        margin-left: auto;
+        font-size: 0.78rem;
+        color: #6f7689;
+      }
+      main {
+        flex: 1;
+        display: grid;
+        place-items: center;
+        padding: 1.5rem;
+      }
+      canvas {
+        border: 1px solid #1d212b;
+        border-radius: 8px;
+        box-shadow: 0 18px 50px rgba(0, 0, 0, 0.55);
+        background: #11131a;
+        max-width: 96vw;
+        height: auto;
+      }
+      pre.err {
+        color: #ff6b6b;
+        padding: 1rem;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <a class="back" href="index.html">← All games</a>
+      <span id="title">Octiron</span>
+      <span class="hint" id="hint"></span>
+    </header>
+    <main>
+      <canvas id="octiron-canvas" width="800" height="600" tabindex="0"></canvas>
+    </main>
+    <script type="module">
+      const GAMES = {
+        demo: { title: "Pong", controls: "Left W/S · Right ↑/↓" },
+        invaders: { title: "Invaders", controls: "Move ←/→ · Fire Space" },
+        snake: { title: "Snake", controls: "Arrows / WASD" },
+        breakout: { title: "Breakout", controls: "Move ←/→" },
+        flappy: { title: "Flappy", controls: "Flap with Space" },
+      };
+      // Only ever resolve to a known game id, so the ?game= value can't be
+      // used to tamper with the dynamic import path.
+      const requested = new URLSearchParams(location.search).get("game");
+      const id = requested && requested in GAMES ? requested : "demo";
+      const g = GAMES[id];
+      document.getElementById("title").textContent = g.title;
+      document.getElementById("hint").textContent = g.controls;
+      document.title = "Octiron — " + g.title;
+
+      const canvas = document.getElementById("octiron-canvas");
+      canvas.addEventListener("click", () => canvas.focus());
+      canvas.focus();
+
+      // textContent, never HTML, so an error string can't inject markup.
+      function showError(message) {
+        const pre = document.createElement("pre");
+        pre.className = "err";
+        pre.textContent = String(message);
+        document.body.appendChild(pre);
+      }
+
+      import(`./pkg/${id}.js`)
+        .then((m) => m.default())
+        .catch((err) => {
+          showError(err);
+          console.error(err);
+        });
+    </script>
+  </body>
+</html>
