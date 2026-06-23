@@ -31,15 +31,31 @@ page.on("pageerror", (e) => console.log("PAGEERR>", e.message));
 
 await page.goto(url, { waitUntil: "load" });
 
+// CLICK="a.card" left-clicks a selector and follows the same-tab navigation
+// (to verify that plain <a href> links work).
+const click = process.env.CLICK;
+if (click) {
+  await page.click(click);
+  await page.waitForLoadState("load");
+  console.log("NAV>", page.url());
+}
+
 // HOLD="KeyS,ArrowUp" holds keys down; TAP="Space" presses a key repeatedly
 // (e.g. to keep a flappy bird aloft). Both need the canvas focused.
 const hold = process.env.HOLD;
 const tap = process.env.TAP;
-if (hold || tap) {
+const press = process.env.PRESS;
+if (hold || tap || press) {
   await page
     .locator("#octiron-canvas")
     .click({ position: { x: 400, y: 540 } })
     .catch(() => {});
+}
+// PRESS="Space" taps a key once (held a few frames), e.g. to start then idle.
+if (press) {
+  await page.keyboard.down(press);
+  await page.waitForTimeout(80);
+  await page.keyboard.up(press);
 }
 if (hold) {
   for (const key of hold.split(",")) await page.keyboard.down(key);

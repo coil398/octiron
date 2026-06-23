@@ -148,6 +148,118 @@ def star():
     d.ellipse([s(2, 2), s(4, 4)], fill=(255, 255, 255, 255))
     finish(img, os.path.join(ROOT, "examples/invaders/assets/star.png"))
 
+# ---- platformer ----
+
+def pf(path):
+    return os.path.join(ROOT, "examples/platformer/assets", path)
+
+def ground():
+    img, d = canvas(40, 40)
+    d.rectangle([s(0, 0), s(40, 40)], fill=(122, 84, 52, 255))      # dirt
+    d.rectangle([s(0, 0), s(40, 13)], fill=(94, 178, 78, 255))      # grass
+    d.rectangle([s(0, 12), s(40, 16)], fill=(64, 134, 56, 255))     # grass shadow
+    for px, py in [(7, 24), (27, 31), (18, 20), (33, 26), (5, 34), (22, 35)]:
+        d.rectangle([s(px, py), s(px + 3, py + 3)], fill=(98, 66, 40, 255))
+    d.rectangle([s(0, 0), s(2, 40)], fill=(108, 74, 46, 255))       # left edge
+    finish(img, pf("ground.png"))
+
+def player():
+    img, d = canvas(30, 44)
+    d.rectangle([s(7, 33), s(13, 44)], fill=(58, 68, 108, 255))     # legs
+    d.rectangle([s(17, 33), s(23, 44)], fill=(58, 68, 108, 255))
+    d.rounded_rectangle([s(5, 18), s(25, 35)], radius=s(4), fill=(72, 124, 214, 255))  # body
+    d.ellipse([s(6, 2), s(24, 22)], fill=(255, 214, 170, 255))      # head
+    d.rounded_rectangle([s(4, 1), s(26, 9)], radius=s(3), fill=(214, 72, 72, 255))     # cap
+    d.rectangle([s(2, 8), s(28, 11)], fill=(214, 72, 72, 255))      # brim
+    d.ellipse([s(16, 9), s(21, 15)], fill=(255, 255, 255, 255))     # eye
+    d.ellipse([s(18, 10), s(21, 14)], fill=(40, 40, 60, 255))
+    finish(img, pf("player.png"))
+
+def slime():
+    img, d = canvas(40, 28)
+    d.rounded_rectangle([s(2, 6), s(38, 27)], radius=s(13), fill=(120, 200, 110, 255))
+    d.ellipse([s(11, 15), s(29, 26)], fill=(150, 222, 140, 255))    # belly
+    for ex in (15, 25):
+        d.ellipse([s(ex - 3, 11), s(ex + 3, 19)], fill=(255, 255, 255, 255))
+        d.ellipse([s(ex - 1, 13), s(ex + 2, 18)], fill=(30, 44, 30, 255))
+    finish(img, pf("slime.png"))
+
+def coin():
+    img, d = canvas(26, 26)
+    d.ellipse([s(2, 2), s(24, 24)], fill=(240, 190, 40, 255))
+    d.ellipse([s(6, 6), s(20, 20)], fill=(255, 226, 92, 255))
+    d.ellipse([s(8, 7), s(13, 13)], fill=(255, 250, 210, 200))      # shine
+    finish(img, pf("coin.png"))
+
+def flag():
+    img, d = canvas(40, 56)
+    d.rectangle([s(6, 3), s(10, 56)], fill=(182, 182, 192, 255))    # pole
+    d.ellipse([s(4, 0), s(12, 8)], fill=(214, 214, 224, 255))       # knob
+    d.polygon([s(10, 5), s(34, 13), s(10, 24)], fill=(232, 72, 72, 255))  # flag
+    finish(img, pf("flag.png"))
+
+# ---- survivor (top-down roguelite) ----
+
+def sv(path):
+    return os.path.join(ROOT, "examples/survivor/assets", path)
+
+def floor():
+    img, d = canvas(64, 64)
+    d.rectangle([s(0, 0), s(64, 64)], fill=(38, 52, 44, 255))
+    for px, py in [(10, 12), (40, 20), (22, 44), (52, 50), (30, 8), (8, 54), (46, 34)]:
+        d.rectangle([s(px, py), s(px + 4, py + 4)], fill=(46, 62, 52, 255))
+    d.rectangle([s(0, 0), s(64, 2)], fill=(31, 43, 37, 255))
+    d.rectangle([s(0, 0), s(2, 64)], fill=(31, 43, 37, 255))
+    finish(img, sv("floor.png"))
+
+def hero():
+    img, d = canvas(30, 34)
+    d.ellipse([s(3, 7), s(27, 33)], fill=(70, 150, 205, 255))   # body
+    d.ellipse([s(6, 2), s(24, 20)], fill=(255, 224, 180, 255))  # head
+    d.chord([s(6, 1), s(24, 17)], 180, 360, fill=(96, 64, 42, 255))  # hair
+    d.ellipse([s(10, 9), s(14, 14)], fill=(40, 40, 60, 255))    # eyes
+    d.ellipse([s(17, 9), s(21, 14)], fill=(40, 40, 60, 255))
+    finish(img, sv("hero.png"))
+
+def zombie():
+    img, d = canvas(30, 32)
+    d.ellipse([s(4, 4), s(26, 30)], fill=(112, 162, 92, 255))
+    for ex in (12, 19):
+        d.ellipse([s(ex - 3, 9), s(ex + 2, 15)], fill=(255, 255, 255, 255))
+        d.ellipse([s(ex - 2, 11), s(ex + 1, 15)], fill=(40, 40, 40, 255))
+    d.line([s(11, 22), s(19, 22)], fill=(40, 40, 40, 255), width=SS * 2)
+    finish(img, sv("zombie.png"))
+
+def bat():
+    img, d = canvas(34, 20)
+    d.polygon([s(0, 2), s(13, 10), s(2, 17)], fill=(142, 82, 172, 255))
+    d.polygon([s(34, 2), s(21, 10), s(32, 17)], fill=(142, 82, 172, 255))
+    d.ellipse([s(11, 3), s(23, 17)], fill=(120, 70, 150, 255))
+    d.ellipse([s(13, 6), s(17, 11)], fill=(255, 90, 90, 255))
+    d.ellipse([s(18, 6), s(22, 11)], fill=(255, 90, 90, 255))
+    finish(img, sv("bat.png"))
+
+def brute():
+    img, d = canvas(46, 42)
+    d.rounded_rectangle([s(3, 4), s(43, 40)], radius=s(14), fill=(202, 72, 72, 255))
+    for ex in (17, 29):
+        d.ellipse([s(ex - 5, 12), s(ex + 5, 24)], fill=(255, 255, 255, 255))
+        d.ellipse([s(ex - 2, 15), s(ex + 3, 22)], fill=(40, 20, 20, 255))
+    d.line([s(15, 31), s(31, 31)], fill=(70, 24, 24, 255), width=SS * 3)
+    finish(img, sv("brute.png"))
+
+def gem():
+    img, d = canvas(16, 16)
+    d.polygon([s(8, 0), s(16, 8), s(8, 16), s(0, 8)], fill=(82, 222, 232, 255))
+    d.polygon([s(8, 3), s(12, 8), s(8, 13), s(4, 8)], fill=(168, 246, 250, 255))
+    finish(img, sv("gem.png"))
+
+def orb():
+    img, d = canvas(14, 14)
+    d.ellipse([s(1, 1), s(13, 13)], fill=(255, 212, 92, 255))
+    d.ellipse([s(3, 3), s(9, 9)], fill=(255, 250, 214, 255))
+    finish(img, sv("orb.png"))
+
 # ----------------------------------------------------------------------------
 
 if __name__ == "__main__":
@@ -163,4 +275,18 @@ if __name__ == "__main__":
     pipe()
     apple()
     brick()
+    print("platformer:")
+    ground()
+    player()
+    slime()
+    coin()
+    flag()
+    print("survivor:")
+    floor()
+    hero()
+    zombie()
+    bat()
+    brute()
+    gem()
+    orb()
     print("done.")

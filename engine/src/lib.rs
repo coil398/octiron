@@ -40,12 +40,14 @@ mod input;
 mod math;
 mod painter;
 mod renderer;
+mod scene;
 mod time;
 
 pub use components::{Sprite, Transform};
 pub use input::Input;
 pub use math::{Rect, Vec2};
 pub use painter::Painter;
+pub use scene::{Scene, SceneStack, Transition};
 
 /// Re-exported ECS types from [hecs]. Define your own component types freely;
 /// hecs requires no registration.
@@ -154,6 +156,13 @@ pub trait Game: 'static {
     /// Paints HUD/text over the entities. Optional; default draws nothing.
     fn draw(&mut self, world: &World, painter: &mut Painter) {
         let _ = (world, painter);
+    }
+
+    /// World-space camera offset (pixels) applied to entity rendering. Sprites
+    /// are drawn at `position - camera`; [`Painter`] HUD is unaffected. Default
+    /// `Vec2::ZERO` (no scrolling).
+    fn camera(&self) -> Vec2 {
+        Vec2::ZERO
     }
 }
 

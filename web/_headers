@@ -1,0 +1,4 @@
+# Cloudflare が .wasm を application/octet-stream で返すと WebAssembly の
+# ストリーミング初期化が失敗するため、MIME type を明示する。
+/*.wasm
+  Content-Type: application/wasm

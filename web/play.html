@@ -41,10 +41,18 @@
         font-weight: 600;
         letter-spacing: 0.06em;
       }
-      .hint {
-        margin-left: auto;
-        font-size: 0.78rem;
+      .controls {
+        padding: 0.85rem 1.2rem 1.1rem;
+        text-align: center;
+        font-size: 0.85rem;
+        color: #aeb4c4;
+        border-top: 1px solid #1b1f2b;
+      }
+      .controls b {
         color: #6f7689;
+        font-weight: 600;
+        margin-right: 0.6rem;
+        letter-spacing: 0.08em;
       }
       main {
         flex: 1;
@@ -70,11 +78,11 @@
     <header>
       <a class="back" href="index.html">← All games</a>
       <span id="title">Octiron</span>
-      <span class="hint" id="hint"></span>
     </header>
     <main>
       <canvas id="octiron-canvas" width="800" height="600" tabindex="0"></canvas>
     </main>
+    <footer class="controls"><b>CONTROLS</b><span id="controls"></span></footer>
     <script type="module">
       const GAMES = {
         demo: { title: "Pong", controls: "Left W/S · Right ↑/↓" },
@@ -82,6 +90,9 @@
         snake: { title: "Snake", controls: "Arrows / WASD" },
         breakout: { title: "Breakout", controls: "Move ←/→" },
         flappy: { title: "Flappy", controls: "Flap with Space" },
+        platformer: { title: "Platformer", controls: "Move ←/→ · Jump Space" },
+        tetris: { title: "Tetris", controls: "←/→ move · ↑/X rotate · Space drop" },
+        survivor: { title: "Survivor", controls: "WASD move · 1/2/3 upgrade · P pause" },
       };
       // Only ever resolve to a known game id, so the ?game= value can't be
       // used to tamper with the dynamic import path.
@@ -89,7 +100,7 @@
       const id = requested && requested in GAMES ? requested : "demo";
       const g = GAMES[id];
       document.getElementById("title").textContent = g.title;
-      document.getElementById("hint").textContent = g.controls;
+      document.getElementById("controls").textContent = g.controls;
       document.title = "Octiron — " + g.title;
 
       const canvas = document.getElementById("octiron-canvas");

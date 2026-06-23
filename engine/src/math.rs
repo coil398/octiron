@@ -71,6 +71,11 @@ impl Rect {
         Vec2::new(self.x + self.w * 0.5, self.y + self.h * 0.5)
     }
 
+    /// This rectangle shifted by `(dx, dy)` (e.g. to apply a camera offset).
+    pub fn offset(self, dx: f32, dy: f32) -> Rect {
+        Rect::new(self.x + dx, self.y + dy, self.w, self.h)
+    }
+
     /// Axis-aligned bounding-box overlap test.
     pub fn intersects(self, other: Rect) -> bool {
         self.x < other.x + other.w

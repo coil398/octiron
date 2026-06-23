@@ -194,11 +194,14 @@ impl<G: Game> ApplicationHandler<Renderer> for App<G> {
                 };
                 game.update(world, &frame);
 
+                // World entities are drawn relative to the camera; HUD (painter)
+                // stays in screen space.
+                let camera = game.camera();
                 let mut items: Vec<DrawItem> = Vec::new();
                 for (transform, sprite) in world.query_mut::<(&Transform, &Sprite)>() {
                     items.push(DrawItem {
                         texture: sprite.texture,
-                        dst: transform.rect(),
+                        dst: transform.rect().offset(-camera.x, -camera.y),
                         src: sprite.src,
                         color: sprite.color,
                     });

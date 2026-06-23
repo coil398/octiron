@@ -1,0 +1,6 @@
+name = "octiron"
+compatibility_date = "2026-06-07"
+
+# Worker スクリプトなしの純静的配信。web/ をそのままアセットとして配る。
+[assets]
+directory = "./web"

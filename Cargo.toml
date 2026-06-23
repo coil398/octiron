@@ -7,6 +7,9 @@ members = [
     "examples/snake",
     "examples/breakout",
     "examples/flappy",
+    "examples/platformer",
+    "examples/tetris",
+    "examples/survivor",
 ]
 
 [workspace.package]
