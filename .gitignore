@@ -4,3 +4,7 @@
 /tools/*.png
 /tools/venv
 /.serena
+/.claude
+/pir_runs
+/.pir_memory
+/tmp

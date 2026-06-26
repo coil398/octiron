@@ -34,18 +34,29 @@
 //! # }
 //! ```
 
+mod animation;
 mod app;
+mod audio;
+mod autotile;
 mod components;
+pub(crate) mod font;
 mod input;
 mod math;
+pub mod math3d;
 mod painter;
 mod renderer;
 mod scene;
 mod time;
 
+pub use animation::Animation;
+pub use audio::Sound;
+pub use autotile::autotile_index_4bit;
 pub use components::{Sprite, Transform};
+pub use font::Font;
+pub use renderer::FONT_GLYPH_H;
 pub use input::Input;
 pub use math::{Rect, Vec2};
+pub use math3d::{CameraUniform, Vertex3D, cube_mesh, diorama_view, proj_ortho, proj_persp};
 pub use painter::Painter;
 pub use scene::{Scene, SceneStack, Transition};
 
@@ -56,6 +67,12 @@ pub use hecs::{Entity, World};
 /// Physical key identifiers, re-exported from winit (e.g. `Key::ArrowLeft`,
 /// `Key::KeyW`, `Key::Space`).
 pub use winit::keyboard::KeyCode as Key;
+
+/// Mouse button identifiers, re-exported from winit (e.g. `MouseButton::Left`,
+/// `MouseButton::Right`).
+pub use winit::event::MouseButton;
+
+use std::cell::RefCell;
 
 use winit::event_loop::EventLoop;
 
@@ -132,6 +149,30 @@ impl<'a> Assets<'a> {
     pub fn texture_size(&self, texture: Texture) -> Vec2 {
         self.renderer.texture_size(texture)
     }
+
+    /// Decodes audio bytes (WAV or MP3; e.g. `include_bytes!("assets/sound.wav")`)
+    /// and returns a [`Sound`] handle for use with [`Frame::play_sound`] and
+    /// [`Frame::play_music`].
+    ///
+    /// Returns `None` if the bytes cannot be decoded (unsupported format, corrupt
+    /// data, etc.).  Uses `from_cursor` internally so it works on both native and
+    /// WASM targets.
+    pub fn load_sound(&mut self, bytes: &'static [u8]) -> Option<Sound> {
+        audio::load_sound_bytes(bytes)
+    }
+
+    /// Builds a [`Font`] from raw TTF/OTF bytes (e.g.
+    /// `include_bytes!("assets/NotoSansCJK.ttf")`).
+    ///
+    /// The returned [`Font`] can be passed to [`Painter::text_font`] to render
+    /// Unicode / CJK text on top of the scene each frame.  The glyph atlas is
+    /// shared across all fonts and lazily populated on first use.
+    ///
+    /// Existing games that do not call this method continue using the built-in
+    /// ASCII bitmap font via [`Painter::text`], which is unaffected.
+    pub fn load_font(&mut self, ttf_bytes: &[u8]) -> Font {
+        Font::from_bytes(ttf_bytes)
+    }
 }
 
 /// Per-frame state handed to [`Game::update`].
@@ -142,6 +183,62 @@ pub struct Frame<'a> {
     pub dt: f32,
     /// The logical drawable size in pixels.
     pub screen: Vec2,
+    /// Internal audio command queue (interior mutability so `update` takes `&Frame`).
+    pub(crate) audio: RefCell<Vec<audio::AudioCmd>>,
+}
+
+impl<'a> Frame<'a> {
+    /// Plays `sound` once (one-shot / SFX).
+    ///
+    /// The request is queued and executed after [`Game::update`] returns.
+    /// If the audio engine has not been initialised yet (before the first user
+    /// gesture on the web), the request is silently dropped.
+    pub fn play_sound(&self, sound: Sound) {
+        self.audio.borrow_mut().push(audio::AudioCmd::PlaySound(sound.0));
+    }
+
+    /// Starts `sound` as a looping background music track.
+    ///
+    /// Any previously playing BGM is stopped.  The request is queued and executed
+    /// after [`Game::update`] returns.
+    pub fn play_music(&self, sound: Sound) {
+        self.audio.borrow_mut().push(audio::AudioCmd::PlayMusic(sound.0));
+    }
+
+    /// Sets the master output volume.  `volume` is clamped to `0.0..=1.0`.
+    pub fn set_master_volume(&self, volume: f32) {
+        self.audio.borrow_mut().push(audio::AudioCmd::SetMasterVolume(volume));
+    }
+}
+
+/// A 3D scene submitted by a game for one frame.
+///
+/// Call [`renderer::Renderer::submit_mesh`] + [`renderer::Renderer::set_camera_3d`]
+/// by returning this from [`Game::scene_3d`].  Returning `None` skips the 3D pass.
+pub struct Scene3D {
+    /// Camera and lighting parameters.
+    pub camera: CameraUniform,
+    /// Meshes: each entry is `(vertices, indices)` with model-space geometry.
+    /// The engine appends them into a shared frame buffer and draws in order.
+    pub meshes: Vec<(Vec<Vertex3D>, Vec<u32>)>,
+    /// Optional texture to sample in the 3D fragment shader.
+    ///
+    /// When `None` (the default), the engine binds a 1×1 white texture so that
+    /// `tex(uv) = [1,1,1,1]` and the output equals the old vertex-color ×
+    /// directional + ambient lighting pipeline.  All existing games (diorama-demo,
+    /// continent-sim Solid3D, etc.) leave this `None` and are pixel-identical.
+    ///
+    /// To use a texture, load it via [`Assets::load_png`] in [`Game::start`] and
+    /// store the returned [`Texture`] handle, then supply it here each frame.
+    /// UV coordinates come from [`Vertex3D::uv`].
+    pub texture: Option<Texture>,
+    /// Background color used to clear the 3D color attachment at the start of the
+    /// 3D pass.  When `None` (the default), the engine clears to the [`Config::clear_color`]
+    /// set at startup — identical to the previous behaviour.
+    ///
+    /// Supply an RGBA value (components in `0.0..=1.0`) to override the sky color
+    /// on a per-frame basis, e.g. `sky: Some([0.4, 0.6, 0.9, 1.0])`.
+    pub sky: Option<[f32; 4]>,
 }
 
 /// A game driven by the engine.
@@ -158,11 +255,24 @@ pub trait Game: 'static {
         let _ = (world, painter);
     }
 
+    /// Returns 3D scene data for this frame, or `None` to skip the 3D pass.
+    /// Existing 2D games simply leave this unimplemented (default = `None`).
+    fn scene_3d(&self) -> Option<Scene3D> {
+        None
+    }
+
     /// World-space camera offset (pixels) applied to entity rendering. Sprites
     /// are drawn at `position - camera`; [`Painter`] HUD is unaffected. Default
     /// `Vec2::ZERO` (no scrolling).
     fn camera(&self) -> Vec2 {
         Vec2::ZERO
+    }
+
+    /// Uniform zoom factor applied to entity rendering, scaling the scene around
+    /// the screen centre. `1.0` = no zoom (default). Values > 1.0 zoom in;
+    /// values 0 < z < 1.0 zoom out. [`Painter`] HUD is unaffected.
+    fn camera_zoom(&self) -> f32 {
+        1.0
     }
 }
 

@@ -13,76 +13,29 @@
       }
       body {
         margin: 0;
-        min-height: 100vh;
-        display: flex;
-        flex-direction: column;
-        background: radial-gradient(1200px 600px at 50% -10%, #161a26, #0b0d12 60%);
+        overflow: hidden;
+        background: #000;
         color: #c8ccd6;
         font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
       }
-      header {
-        display: flex;
-        align-items: baseline;
-        gap: 1rem;
-        padding: 0.9rem 1.2rem;
-        border-bottom: 1px solid #1b1f2b;
-      }
-      .back {
-        color: #7fd2ff;
-        text-decoration: none;
-        font-size: 0.85rem;
-        font-weight: 600;
-      }
-      .back:hover {
-        text-decoration: underline;
-      }
-      #title {
-        font-size: 0.95rem;
-        font-weight: 600;
-        letter-spacing: 0.06em;
-      }
-      .controls {
-        padding: 0.85rem 1.2rem 1.1rem;
-        text-align: center;
-        font-size: 0.85rem;
-        color: #aeb4c4;
-        border-top: 1px solid #1b1f2b;
-      }
-      .controls b {
-        color: #6f7689;
-        font-weight: 600;
-        margin-right: 0.6rem;
-        letter-spacing: 0.08em;
-      }
-      main {
-        flex: 1;
-        display: grid;
-        place-items: center;
-        padding: 1.5rem;
-      }
       canvas {
-        border: 1px solid #1d212b;
-        border-radius: 8px;
-        box-shadow: 0 18px 50px rgba(0, 0, 0, 0.55);
-        background: #11131a;
-        max-width: 96vw;
-        height: auto;
+        display: block;
+        width: 100vw;
+        height: 100vh;
+        background: #000;
       }
       pre.err {
+        position: fixed;
+        top: 1rem;
+        left: 1rem;
         color: #ff6b6b;
         padding: 1rem;
+        background: rgba(0,0,0,0.8);
       }
     </style>
   </head>
   <body>
-    <header>
-      <a class="back" href="index.html">← All games</a>
-      <span id="title">Octiron</span>
-    </header>
-    <main>
-      <canvas id="octiron-canvas" width="800" height="600" tabindex="0"></canvas>
-    </main>
-    <footer class="controls"><b>CONTROLS</b><span id="controls"></span></footer>
+    <canvas id="octiron-canvas" tabindex="0"></canvas>
     <script type="module">
       const GAMES = {
         demo: { title: "Pong", controls: "Left W/S · Right ↑/↓" },
@@ -93,17 +46,20 @@
         platformer: { title: "Platformer", controls: "Move ←/→ · Jump Space" },
         tetris: { title: "Tetris", controls: "←/→ move · ↑/X rotate · Space drop" },
         survivor: { title: "Survivor", controls: "WASD move · 1/2/3 upgrade · P pause" },
+        "continent-sim": { title: "Continent", controls: "Space pause · 1-4 speed · O overlay · P preset · G art · click inspect · M edit/intervene · R new world" },
+        "diorama-demo": { title: "Diorama Demo (3D)", controls: "自動回転 — 操作不要" },
       };
       // Only ever resolve to a known game id, so the ?game= value can't be
       // used to tamper with the dynamic import path.
       const requested = new URLSearchParams(location.search).get("game");
       const id = requested && requested in GAMES ? requested : "demo";
       const g = GAMES[id];
-      document.getElementById("title").textContent = g.title;
-      document.getElementById("controls").textContent = g.controls;
       document.title = "Octiron — " + g.title;
 
       const canvas = document.getElementById("octiron-canvas");
+      // winit 0.30 monitors the canvas via ResizeObserver and fires
+      // WindowEvent::Resized automatically when the CSS size changes.
+      // CSS sets canvas to 100vw × 100vh, so no manual resize handling needed.
       canvas.addEventListener("click", () => canvas.focus());
       canvas.focus();
 

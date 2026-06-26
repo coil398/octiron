@@ -9,13 +9,19 @@ description = "A from-scratch 2D game engine (wgpu + ECS) for web and native, vi
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+[features]
+# Pull in kira (cpal backend) for real audio.  Omit to build without ALSA.
+audio = ["dep:kira"]
+
 [dependencies]
 wgpu = "29.0.3"
 winit = "0.30.13"
 hecs = { version = "0.11", default-features = false, features = ["std", "macros"] }
 bytemuck = { version = "1", features = ["derive"] }
+glam = { version = "0.33.1", features = ["bytemuck"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
 log = "0.4"
+ab_glyph = "0.2.32"
 
 # Web (WASM): async wgpu init + canvas glue, plus a WebGL2 fallback backend so
 # the engine still runs on browsers without WebGPU (e.g. older Safari).
@@ -36,6 +42,15 @@ wgpu = { version = "29.0.3", features = [
     "webgl",
     "fragile-send-sync-non-atomic-wasm",
 ] }
+
+# Audio: kira wraps cpal which handles native + WASM (via Web Audio API).
+# ogg needs vorbis; wav needs pcm — kira 0.12 splits codec and container features.
+# Only included when the "audio" feature is enabled (omit for ALSA-free native builds).
+[dependencies.kira]
+version = "0.12"
+default-features = false
+features = ["cpal", "wav", "pcm", "mp3", "ogg", "vorbis"]
+optional = true
 
 # Native desktop: block on async wgpu init and route logs to stderr.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

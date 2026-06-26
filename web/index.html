@@ -110,7 +110,7 @@
     <header>
       <h1>OCTIRON</h1>
       <p class="tag">
-        A from-scratch 2D game engine — <b>eight games, one engine</b>, written
+        A from-scratch 2D/3D game engine — <b>9 games + 1 demo, one engine</b>, written
         in Rust, run as WebAssembly via wgpu.
       </p>
     </header>
@@ -172,13 +172,27 @@
           <p class="ctrl">WASD · auto-fire · 1/2/3 upgrade</p>
         </div>
       </a>
+      <a class="card" href="play.html?game=continent-sim">
+        <img src="thumbs/continent-sim.png" alt="Continent" loading="lazy" />
+        <div class="meta">
+          <h2>Continent <span class="genre">GOD-VIEW SIM</span></h2>
+          <p class="ctrl">Space · 1-4 · O/P · click inspect · M edit</p>
+        </div>
+      </a>
+      <a class="card" href="play.html?game=diorama-demo">
+        <img src="thumbs/diorama-demo.png" alt="Diorama Demo" loading="lazy" />
+        <div class="meta">
+          <h2>Diorama Demo (3D) <span class="genre">3D PIPELINE</span></h2>
+          <p class="ctrl">octiron 3D パイプラインの確認: ライティングされた回転キューブ</p>
+        </div>
+      </a>
     </main>
 
     <footer>
       Built with <code>wgpu</code> (WebGPU / WebGL2) + <code>hecs</code> ECS.
       <br />
-      Each game is a crate under <code>examples/</code>; build with
-      <code>./build.sh all</code>.
+      Each game is a crate under <code>examples/</code> or <code>games/</code>;
+      build with <code>./build.sh all</code>.
     </footer>
   </body>
 </html>

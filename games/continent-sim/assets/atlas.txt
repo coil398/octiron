@@ -1,0 +1,9 @@
+deepocean 0 0 64 64
+desert 65 0 64 64
+forest 130 0 64 64
+hills 195 0 64 64
+mountain 260 0 64 64
+ocean 325 0 64 64
+plains 390 0 64 64
+river 0 65 64 64
+tundra 65 65 64 64

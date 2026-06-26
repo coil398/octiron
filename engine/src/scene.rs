@@ -59,6 +59,12 @@ pub trait Scene {
         Vec2::ZERO
     }
 
+    /// Uniform zoom factor for this scene (see [`Game::camera_zoom`](crate::Game::camera_zoom)).
+    /// Default `1.0` (no zoom).
+    fn camera_zoom(&self) -> f32 {
+        1.0
+    }
+
     /// If `true`, the scene beneath this one is still drawn (e.g. a translucent
     /// pause menu over a frozen level). Only the top scene ever updates.
     fn overlay(&self) -> bool {
@@ -135,5 +141,13 @@ impl SceneStack {
             .last()
             .map(|scene| scene.camera())
             .unwrap_or(Vec2::ZERO)
+    }
+
+    /// The active scene's zoom factor.
+    pub fn camera_zoom(&self) -> f32 {
+        self.stack
+            .last()
+            .map(|scene| scene.camera_zoom())
+            .unwrap_or(1.0)
     }
 }

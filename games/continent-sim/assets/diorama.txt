@@ -1,0 +1,10 @@
+capital-city 0 0 128 128
+deepocean 129 0 128 128
+desert 258 0 128 128
+forest 0 129 128 128
+hills 129 129 128 128
+mountain 258 129 128 128
+ocean 0 258 128 128
+plains 129 258 128 128
+town 258 258 128 128
+volcano 0 387 128 128

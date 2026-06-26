@@ -10,6 +10,8 @@ members = [
     "examples/platformer",
     "examples/tetris",
     "examples/survivor",
+    "games/continent-sim",
+    "games/diorama-demo",
 ]
 
 [workspace.package]
