@@ -46,6 +46,7 @@ pub mod math3d;
 mod painter;
 mod renderer;
 mod scene;
+mod storage;
 mod time;
 
 pub use animation::Animation;
@@ -58,6 +59,7 @@ pub use input::Input;
 pub use math::{Rect, Vec2};
 pub use math3d::{CameraUniform, Vertex3D, cube_mesh, diorama_view, proj_ortho, proj_persp};
 pub use painter::Painter;
+pub use storage::Storage;
 pub use scene::{Scene, SceneStack, Transition};
 
 /// Re-exported ECS types from [hecs]. Define your own component types freely;
