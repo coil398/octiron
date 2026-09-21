@@ -12,6 +12,9 @@ crate-type = ["cdylib", "rlib"]
 [features]
 # Pull in kira (cpal backend) for real audio.  Omit to build without ALSA.
 audio = ["dep:kira"]
+# Pull in gilrs for native gamepad input.  Omit to build without libudev;
+# the web backend (W3C Gamepad API) needs no flag.
+gamepad = ["dep:gilrs"]
 
 [dependencies]
 wgpu = "29.0.3"
@@ -35,6 +38,9 @@ web-sys = { version = "0.3", features = [
     "Document",
     "Element",
     "HtmlCanvasElement",
+    "Navigator",
+    "Gamepad",
+    "GamepadButton",
     "Performance",
     "Storage",
     "console",
@@ -56,4 +62,5 @@ optional = true
 # Native desktop: block on async wgpu init and route logs to stderr.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 pollster = "0.4"
+gilrs = { version = "0.11", optional = true }
 env_logger = "0.11"

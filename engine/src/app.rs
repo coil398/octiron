@@ -9,7 +9,7 @@ use hecs::World;
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, KeyEvent, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoopProxy};
-use winit::keyboard::PhysicalKey;
+use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
 
 #[cfg(target_arch = "wasm32")]
@@ -29,6 +29,8 @@ pub(crate) struct App<G: Game> {
     game: G,
     world: World,
     input: Input,
+    #[cfg(all(not(target_arch = "wasm32"), feature = "gamepad"))]
+    gamepad: Option<gilrs::Gilrs>,
     clock: Clock,
     clear: Color,
     logical: Vec2,
@@ -53,6 +55,8 @@ impl<G: Game> App<G> {
             game,
             world: World::new(),
             input: Input::new(),
+            #[cfg(all(not(target_arch = "wasm32"), feature = "gamepad"))]
+            gamepad: gilrs::Gilrs::new().ok(),
             clock: Clock::new(),
             clear: config.clear_color,
             logical: config.logical_size,
@@ -129,6 +133,101 @@ impl<G: Game> App<G> {
             self.audio = AudioEngine::try_new();
         }
     }
+    /// Polls the active gamepad backend and folds its state into the
+    /// input as logical keys — see [`Input::sync_pad`]. The mapping
+    /// follows the W3C "standard" layout: south→Space, east→Escape,
+    /// west→X, north→Y, shoulders→PageUp/PageDown, select→Tab,
+    /// start→Enter, d-pad and left stick→arrows.
+    #[cfg(all(not(target_arch = "wasm32"), feature = "gamepad"))]
+    fn poll_gamepad(&mut self) {
+        let Some(gilrs) = self.gamepad.as_mut() else {
+            return;
+        };
+        while gilrs.next_event().is_some() {}
+        let mut held = std::collections::HashSet::new();
+        if let Some((_id, pad)) = gilrs.gamepads().next() {
+            use gilrs::{Axis, Button};
+            const MAP: &[(Button, KeyCode)] = &[
+                (Button::South, KeyCode::Space),
+                (Button::East, KeyCode::Escape),
+                (Button::West, KeyCode::KeyX),
+                (Button::North, KeyCode::KeyY),
+                (Button::LeftTrigger, KeyCode::PageUp),
+                (Button::RightTrigger, KeyCode::PageDown),
+                (Button::Select, KeyCode::Tab),
+                (Button::Start, KeyCode::Enter),
+                (Button::DPadUp, KeyCode::ArrowUp),
+                (Button::DPadDown, KeyCode::ArrowDown),
+                (Button::DPadLeft, KeyCode::ArrowLeft),
+                (Button::DPadRight, KeyCode::ArrowRight),
+            ];
+            for (btn, key) in MAP {
+                if pad.is_pressed(*btn) {
+                    held.insert(*key);
+                }
+            }
+            let x = pad.axis_data(Axis::LeftStickX).map_or(0.0, |d| d.value());
+            let y = pad.axis_data(Axis::LeftStickY).map_or(0.0, |d| d.value());
+            crate::input::stick_held(x, y, &mut held);
+        }
+        self.input.sync_pad(&held);
+    }
+
+    /// The web backend: `navigator.getGamepads()` polled once per frame
+    /// under the W3C "standard" mapping — same logical keys as gilrs
+    /// emits on native.
+    #[cfg(target_arch = "wasm32")]
+    fn poll_gamepad(&mut self) {
+        use wasm_bindgen::JsCast;
+        const BUTTON_MAP: &[(u32, KeyCode)] = &[
+            (0, KeyCode::Space),
+            (1, KeyCode::Escape),
+            (2, KeyCode::KeyX),
+            (3, KeyCode::KeyY),
+            (4, KeyCode::PageUp),
+            (5, KeyCode::PageDown),
+            (8, KeyCode::Tab),
+            (9, KeyCode::Enter),
+            (12, KeyCode::ArrowUp),
+            (13, KeyCode::ArrowDown),
+            (14, KeyCode::ArrowLeft),
+            (15, KeyCode::ArrowRight),
+        ];
+        let mut held = std::collections::HashSet::new();
+        if let Some(pads) =
+            web_sys::window().and_then(|w| w.navigator().get_gamepads().ok())
+        {
+            if let Some(pad) = pads
+                .iter()
+                .filter_map(|v| v.dyn_into::<web_sys::Gamepad>().ok())
+                .find(|p| p.connected())
+            {
+                let buttons = pad.buttons();
+                for (idx, key) in BUTTON_MAP {
+                    let pressed = buttons
+                        .get(*idx)
+                        .dyn_into::<web_sys::GamepadButton>()
+                        .is_ok_and(|b| b.pressed());
+                    if pressed {
+                        held.insert(*key);
+                    }
+                }
+                let axes = pad.axes();
+                let x = axes.get(0).as_f64().unwrap_or(0.0) as f32;
+                let y = axes.get(1).as_f64().unwrap_or(0.0) as f32;
+                crate::input::stick_held(x, y, &mut held);
+            }
+        }
+        self.input.sync_pad(&held);
+    }
+
+    /// No pad backend on this build — native without `gamepad` reports
+    /// an empty pad so stale holds never linger.
+    #[cfg(all(not(target_arch = "wasm32"), not(feature = "gamepad")))]
+    fn poll_gamepad(&mut self) {
+        self.input.sync_pad(&std::collections::HashSet::new());
+    }
+
 }
 
 impl<G: Game> ApplicationHandler<Renderer> for App<G> {
@@ -241,6 +340,7 @@ impl<G: Game> ApplicationHandler<Renderer> for App<G> {
                     return;
                 }
                 self.ensure_started();
+                self.poll_gamepad();
 
                 let App {
                     game,
