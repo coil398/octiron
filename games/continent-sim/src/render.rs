@@ -1037,30 +1037,48 @@ impl Continent {
     pub(crate) fn draw_status(&self, painter: &mut Painter) {
         let y = MAP_Y + MAP_H + 6.0;
         let dim = [0.55, 0.60, 0.70, 1.0];
+        // The 3D pass paints the whole framebuffer, including this strip.
+        // Cover it so the hint sits on the same dark band as the 2D view.
+        let screen_w = PANEL_X + PANEL_W + MARGIN;
+        painter.rect(0.0, MAP_Y + MAP_H, screen_w, 48.0, [0.06, 0.07, 0.10, 1.0]);
+
+        // Line 1 matches 2D. Camera keys go on line 2, which has the room.
+        let line1 = "[Space]停止  [1-4]速度  [5]調べ [6]上げ [7]恵 [8]建国  [O]表示 [G]画風 [H]ヘルプ";
         let cam = if self.art_style == ArtStyle::Solid3D {
             "  [Q/E]回転 [Z/X]仰角"
         } else {
             ""
         };
-        let line1 = format!(
-            "[Space]停止  [1-4]速度  [5]調べ [6]上げ [7]恵 [8]建国  [O]表示 [G]画風 [H]ヘルプ{}",
-            cam
-        );
         let line2 = format!(
-            "信仰 {:.0}  道具:{}  目標:{}  {} / {}  SEED {}",
+            "信仰 {:.0}  道具:{}  目標:{}  {} / {}  SEED {}{}",
             self.faith,
             self.god_tool.label_jp(),
             self.goal_line(),
             self.scenario.label_jp(),
             self.art_style.label_jp(),
-            self.seed
+            self.seed,
+            cam
         );
+        let px = 0.34 * FONT_GLYPH_H;
+        let max_w = screen_w - MAP_X - 8.0;
         if let Some(font) = self.font.as_ref() {
-            painter.text_font(MAP_X, y, 0.36 * FONT_GLYPH_H, dim, font, &line1);
-            painter.text_font(MAP_X, y + 16.0, 0.36 * FONT_GLYPH_H, dim, font, &line2);
+            painter.text_font(MAP_X, y, px, dim, font, line1);
+            let shown = if painter.text_font_width(px, font, &line2) <= max_w {
+                line2
+            } else {
+                format!(
+                    "信仰 {:.0}  道具:{}  目標:{}  {}{}",
+                    self.faith,
+                    self.god_tool.label_jp(),
+                    self.goal_line(),
+                    self.art_style.label_jp(),
+                    cam
+                )
+            };
+            painter.text_font(MAP_X, y + 18.0, px, dim, font, &shown);
         } else {
-            painter.text(MAP_X, y, 0.36, dim, &line1);
-            painter.text(MAP_X, y + 16.0, 0.36, dim, &line2);
+            painter.text(MAP_X, y, 0.34, dim, line1);
+            painter.text(MAP_X, y + 18.0, 0.34, dim, &line2);
         }
     }
 
