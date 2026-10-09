@@ -272,42 +272,27 @@ impl Continent {
         };
     }
 
-    /// §6: draws the god intervention HUD strip just below the map area,
-    /// overlaid on the status bar when in EDIT mode.
+    /// Edit-mode card along the bottom of the map. Observe mode draws nothing.
     pub(crate) fn draw_intervention_hud(&self, painter: &mut Painter) {
-        // HUD background bar.
-        let hud_y = MAP_Y + MAP_H - 20.0;
-        let hud_h = 20.0;
-
         if self.edit_mode == EditMode::Observe {
             return;
         }
-
-        // Edit mode active.
-        painter.rect(MAP_X, hud_y, MAP_W, hud_h, [0.08, 0.10, 0.20, 0.88]);
-
-        // Faith bar (left side).
-        let bar_w = 120.0;
-        let faith_frac = (self.faith / FAITH_MAX).clamp(0.0, 1.0);
-        // Background.
-        painter.rect(MAP_X + 4.0, hud_y + 4.0, bar_w, 12.0, [0.20, 0.20, 0.30, 1.0]);
-        // Filled.
-        let bar_color = if self.faith < 10.0 {
-            [0.85, 0.25, 0.20, 1.0]
-        } else {
-            [0.50, 0.80, 1.00, 1.0]
-        };
-        painter.rect(MAP_X + 4.0, hud_y + 4.0, bar_w * faith_frac, 12.0, bar_color);
-        self.pt(painter, MAP_X + 4.0, hud_y + 4.0, 0.34, [1.0, 1.0, 1.0, 1.0],
-            &format!("信仰 {:.0}/{:.0}", self.faith, FAITH_MAX));
-
-        // Tool label (right of faith bar).
-        let tool_label = self.edit_tool.label_jp();
-        self.pt(painter, MAP_X + bar_w + 12.0, hud_y + 4.0, 0.36, [1.0, 0.90, 0.40, 1.0],
-            &format!("ツール: {}  [T] 次へ", tool_label));
-
-        // Mode label (far right).
-        self.pt(painter, MAP_X + bar_w + 240.0, hud_y + 4.0, 0.36, [0.55, 1.0, 0.55, 1.0],
-            "編集モード  [M] 観察");
+        let w = MAP_W - 32.0;
+        let h = 44.0;
+        let x = MAP_X + 16.0;
+        let y = MAP_Y + MAP_H - h - 14.0;
+        painter.rect(x + 4.0, y + 5.0, w, h, [0.0, 0.0, 0.0, 0.28]);
+        ui_card(painter, x, y, w, h, UI_PANEL, UI_LINE, 1.0);
+        self.tx(painter, x + 16.0, y + 14.0, 13.0, UI_DIM, "信仰");
+        let frac = (self.faith / FAITH_MAX).clamp(0.0, 1.0);
+        let bar_x = x + 56.0;
+        painter.rect(bar_x, y + 19.0, 140.0, 6.0, UI_TRACK);
+        let bar_color = if self.faith < 10.0 { UI_RED } else { UI_ACCENT };
+        painter.rect(bar_x, y + 19.0, 140.0 * frac, 6.0, bar_color);
+        self.tx(painter, bar_x + 148.0, y + 14.0, 13.0, UI_INK, &format!("{:.0}", self.faith));
+        self.tx(painter, x + 250.0, y + 14.0, 14.0, UI_GOLD, self.edit_tool.label_jp());
+        let back = "M で観察に戻る";
+        let bw = self.tx_w(painter, 13.0, back);
+        self.tx(painter, x + w - 16.0 - bw, y + 14.0, 13.0, UI_DIM, back);
     }
 }

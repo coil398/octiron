@@ -81,6 +81,60 @@ pub(crate) fn lerp_color(a: Color, b: Color, t: f32) -> Color {
     ]
 }
 
+pub(crate) fn screen_px() -> (f32, f32) {
+    (PANEL_X + PANEL_W + MARGIN, MAP_Y + MAP_H + CHROME_H)
+}
+
+pub(crate) fn ui_card(
+    painter: &mut Painter,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    fill: Color,
+    border: Color,
+    t: f32,
+) {
+    painter.rect(x, y, w, h, border);
+    painter.rect(
+        x + t,
+        y + t,
+        (w - t * 2.0).max(0.0),
+        (h - t * 2.0).max(0.0),
+        fill,
+    );
+}
+
+fn grouped(n: u64) -> String {
+    let s = n.to_string();
+    let mut out = String::new();
+    for (i, ch) in s.chars().rev().enumerate() {
+        if i > 0 && i % 3 == 0 {
+            out.push(',');
+        }
+        out.push(ch);
+    }
+    out.chars().rev().collect()
+}
+
+fn chronicle_parts(line: &str) -> (String, String) {
+    if let Some(rest) = line.strip_prefix('Y') {
+        if let Some((year, body)) = rest.split_once(' ') {
+            if !year.is_empty() && year.chars().all(|c| c.is_ascii_digit()) {
+                return (year.to_string(), body.to_string());
+            }
+        }
+    }
+    (String::new(), line.to_string())
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ChipTone {
+    Quiet,
+    On,
+    Warm,
+}
+
 // ---- atlas / library loading -----------------------------------------------
 
 impl Continent {
@@ -823,21 +877,202 @@ impl Continent {
         }
     }
 
-    pub(crate) fn draw_panel(&self, painter: &mut Painter) {
-        let ink = [0.85, 0.88, 0.95, 1.0];
-        let dim = [0.55, 0.60, 0.70, 1.0];
-        let accent = [0.55, 0.85, 1.0, 1.0];
-        let x = PANEL_X + 12.0;
-
-        painter.rect(PANEL_X, MAP_Y, PANEL_W, MAP_H, [0.10, 0.11, 0.15, 1.0]);
-
-        let mut y = MAP_Y + 10.0;
-        if let Some(font) = self.font.as_ref() {
-            painter.text_font(x, y, 0.62 * FONT_GLYPH_H, accent, font, "大陸シム");
-        } else {
-            painter.text(x, y, 0.62, accent, "CONTINENT");
+    pub(crate) fn tx(
+        &self,
+        painter: &mut Painter,
+        x: f32,
+        y: f32,
+        px: f32,
+        color: Color,
+        text: &str,
+    ) {
+        if text.is_empty() {
+            return;
         }
-        y += 28.0;
+        if let Some(font) = self.font.as_ref() {
+            painter.text_font(x, y, px, color, font, text);
+        } else {
+            painter.text(x, y, px / FONT_GLYPH_H, color, text);
+        }
+    }
+
+    pub(crate) fn tx_w(&self, painter: &mut Painter, px: f32, text: &str) -> f32 {
+        if text.is_empty() {
+            return 0.0;
+        }
+        if let Some(font) = self.font.as_ref() {
+            painter.text_font_width(px, font, text)
+        } else {
+            text.chars().count() as f32 * 8.0 * (px / FONT_GLYPH_H)
+        }
+    }
+
+    fn tx_centered(
+        &self,
+        painter: &mut Painter,
+        cx: f32,
+        y: f32,
+        px: f32,
+        color: Color,
+        text: &str,
+    ) {
+        let w = self.tx_w(painter, px, text);
+        self.tx(painter, cx - w * 0.5, y, px, color, text);
+    }
+
+    fn chip_width(&self, painter: &mut Painter, label: &str, key: &str) -> f32 {
+        let label_w = self.tx_w(painter, 13.0, label);
+        let key_w = if key.is_empty() {
+            0.0
+        } else {
+            self.tx_w(painter, 11.0, key) + 8.0
+        };
+        22.0 + label_w + key_w
+    }
+
+    fn chip(
+        &self,
+        painter: &mut Painter,
+        x: f32,
+        y: f32,
+        label: &str,
+        key: &str,
+        tone: ChipTone,
+    ) -> f32 {
+        let (fill, border, ink) = match tone {
+            ChipTone::Quiet => (UI_RAISED, UI_LINE, UI_INK),
+            ChipTone::On => (UI_BLUE_BG, UI_ACCENT, UI_INK),
+            ChipTone::Warm => (UI_WARM_BG, UI_GOLD, UI_INK),
+        };
+        let w = self.chip_width(painter, label, key);
+        let h = 28.0;
+        ui_card(painter, x, y, w, h, fill, border, 1.0);
+        let label_w = self.tx_w(painter, 13.0, label);
+        self.tx(painter, x + 11.0, y + 7.0, 13.0, ink, label);
+        if !key.is_empty() {
+            self.tx(
+                painter,
+                x + 11.0 + label_w + 8.0,
+                y + 8.0,
+                11.0,
+                UI_DIM,
+                key,
+            );
+        }
+        w
+    }
+
+    fn square_chip(
+        &self,
+        painter: &mut Painter,
+        x: f32,
+        y: f32,
+        label: &str,
+        tone: ChipTone,
+    ) -> f32 {
+        let (fill, border, ink) = match tone {
+            ChipTone::Quiet => (UI_RAISED, UI_LINE, UI_DIM),
+            ChipTone::On => (UI_BLUE_BG, UI_ACCENT, UI_INK),
+            ChipTone::Warm => (UI_WARM_BG, UI_GOLD, UI_INK),
+        };
+        let s = 28.0;
+        ui_card(painter, x, y, s, s, fill, border, 1.0);
+        let tw = self.tx_w(painter, 13.0, label);
+        self.tx(painter, x + (s - tw) * 0.5, y + 7.0, 13.0, ink, label);
+        s
+    }
+
+    fn section_title(&self, painter: &mut Painter, x: f32, y: f32, text: &str) {
+        painter.rect(x, y + 3.0, 3.0, 12.0, UI_ACCENT);
+        self.tx(painter, x + 10.0, y, 13.0, UI_INK, text);
+    }
+
+    fn labeled_row(
+        &self,
+        painter: &mut Painter,
+        x: f32,
+        y: f32,
+        w: f32,
+        label: &str,
+        value: &str,
+    ) -> f32 {
+        self.tx(painter, x, y, 13.0, UI_DIM, label);
+        let vw = self.tx_w(painter, 13.0, value);
+        let vx = (x + w - vw).max(x + 72.0);
+        self.tx(painter, vx, y, 13.0, UI_INK, value);
+        y + 22.0
+    }
+
+    fn unification_frac(&self) -> f32 {
+        if self.unification_logged {
+            return 1.0;
+        }
+        if self.extinction_logged {
+            return 0.0;
+        }
+        let n = self.settlements.len();
+        if n == 0 {
+            return 0.0;
+        }
+        let best = self
+            .nations
+            .iter()
+            .map(|nat| nat.territory.len())
+            .max()
+            .unwrap_or(0);
+        (best as f32 / n as f32 / UNIFICATION_THRESHOLD).clamp(0.0, 1.0)
+    }
+
+    fn paint_frame(&self, painter: &mut Painter) {
+        let (sw, sh) = screen_px();
+        painter.rect(0.0, 0.0, sw, MAP_Y, UI_PAGE);
+        painter.rect(0.0, 0.0, MAP_X, sh, UI_PAGE);
+        painter.rect(MAP_X + MAP_W, MAP_Y, MARGIN, MAP_H, UI_PAGE);
+        painter.rect(PANEL_X + PANEL_W, 0.0, MARGIN, sh, UI_PAGE);
+        painter.rect(MAP_X - 1.0, MAP_Y - 1.0, MAP_W + 2.0, 1.0, UI_LINE);
+        painter.rect(MAP_X - 1.0, MAP_Y, 1.0, MAP_H, UI_LINE);
+        painter.rect(MAP_X + MAP_W, MAP_Y, 1.0, MAP_H, UI_LINE);
+    }
+
+    pub(crate) fn draw_panel(&self, painter: &mut Painter) {
+        self.paint_frame(painter);
+        ui_card(
+            painter, PANEL_X, MAP_Y, PANEL_W, MAP_H, UI_PANEL, UI_LINE, 1.0,
+        );
+
+        let x = PANEL_X + 16.0;
+        let inner_w = PANEL_W - 32.0;
+        let mut y = MAP_Y + 16.0;
+
+        let state = if self.paused {
+            "停止中".to_string()
+        } else {
+            format!("x{}", self.speed)
+        };
+        let state_w = self.tx_w(painter, 13.0, &state);
+        let state_c = if self.paused { UI_GOLD } else { UI_ACCENT };
+        self.tx(painter, x, y, 13.0, UI_DIM, "大陸シム");
+        self.tx(painter, x + inner_w - state_w, y, 13.0, state_c, &state);
+        y += 22.0;
+
+        let year = format!("{}年", self.year);
+        self.tx(painter, x, y, 26.0, UI_INK, &year);
+        let year_w = self.tx_w(painter, 26.0, &year);
+        let era = self.current_era().label_jp();
+        let era_w = self.tx_w(painter, 12.0, era) + 16.0;
+        let era_x = x + year_w + 12.0;
+        ui_card(
+            painter,
+            era_x,
+            y + 4.0,
+            era_w,
+            22.0,
+            UI_RAISED,
+            UI_LINE,
+            1.0,
+        );
+        self.tx(painter, era_x + 8.0, y + 8.0, 12.0, UI_ACCENT, era);
+        y += 40.0;
 
         let pop_total: f32 = self.settlements.iter().map(|s| s.pop).sum();
         let colonized = if self.habitable_count > 0 {
@@ -845,690 +1080,788 @@ impl Continent {
         } else {
             0.0
         };
-        let speed_s = if self.paused {
-            "停止中".to_string()
-        } else {
-            format!("x{}", self.speed)
-        };
+        let gap = 8.0;
+        let mw = (inner_w - gap) * 0.5;
+        let mh = 54.0;
+        self.metric(painter, x, y, mw, mh, "人口", &grouped(pop_total as u64));
+        self.metric(
+            painter,
+            x + mw + gap,
+            y,
+            mw,
+            mh,
+            "集落",
+            &grouped(self.settlements.len() as u64),
+        );
+        y += mh + gap;
+        self.metric(
+            painter,
+            x,
+            y,
+            mw,
+            mh,
+            "国家",
+            &self.nations.len().to_string(),
+        );
+        self.metric(
+            painter,
+            x + mw + gap,
+            y,
+            mw,
+            mh,
+            "開拓",
+            &format!("{:.0}%", colonized),
+        );
+        y += mh + 16.0;
 
-        let last_shock = if let Some((_, kind, yr)) = self.last_disaster {
-            format!("{} {}年", kind.label_jp(), yr)
-        } else {
-            "-".to_string()
-        };
-
-        let tech_str = Continent::tech_display(self.all_tech());
-
-        let top_nation_str = if let Some(top) = self
+        let land = self
             .nations
             .iter()
             .max_by_key(|n| n.territory.len())
-        {
-            top.name.clone()
-        } else {
-            "-".to_string()
-        };
-
-        // §9 wars: summary for panel.
-        let wars_str = if self.wars.is_empty() {
-            "-".to_string()
-        } else {
-            if let Some(w) = self.wars.iter().max_by_key(|w| w.fronts.len()) {
-                let na = self
-                    .nations
-                    .iter()
-                    .find(|n| n.id == w.a)
-                    .map(|n| n.name.as_str())
-                    .unwrap_or("?");
-                let nb = self
-                    .nations
-                    .iter()
-                    .find(|n| n.id == w.b)
-                    .map(|n| n.name.as_str())
-                    .unwrap_or("?");
-                format!("{} ({} vs {})", self.wars.len(), na, nb)
-            } else {
-                self.wars.len().to_string()
-            }
-        };
-
-        // §4 PARKS: leading nation's trait letters.
-        let traits_str = if let Some(top_nation) = self
+            .map(|n| (n.id, n.name.clone(), self.nation_total_pop(n) as u64));
+        let might = self
             .nations
             .iter()
-            .max_by_key(|n| n.territory.len())
-        {
-            traits_display(top_nation.traits)
+            .max_by(|a, b| {
+                self.nation_total_pop(a)
+                    .partial_cmp(&self.nation_total_pop(b))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .map(|n| (n.id, n.name.clone(), self.nation_total_pop(n) as u64));
+
+        let wars = if self.wars.is_empty() {
+            "なし".to_string()
+        } else if let Some(w) = self.wars.iter().max_by_key(|w| w.fronts.len()) {
+            let na = self
+                .nations
+                .iter()
+                .find(|n| n.id == w.a)
+                .map(|n| n.name.as_str())
+                .unwrap_or("?");
+            let nb = self
+                .nations
+                .iter()
+                .find(|n| n.id == w.b)
+                .map(|n| n.name.as_str())
+                .unwrap_or("?");
+            format!("{}件 · {} 対 {}", self.wars.len(), na, nb)
         } else {
-            traits_display(0)
+            format!("{}件", self.wars.len())
+        };
+        let disaster = if let Some((_, kind, yr)) = self.last_disaster {
+            format!("{}件 · {} {}年", self.disaster_count, kind.label_jp(), yr)
+        } else if self.disaster_count == 0 {
+            "なし".to_string()
+        } else {
+            format!("{}件", self.disaster_count)
+        };
+        let tech = Continent::tech_display(self.all_tech());
+        let traits = if let Some((_, ref name, _)) = land {
+            self.nations
+                .iter()
+                .find(|n| n.name == *name)
+                .map(|n| traits_display(n.traits))
+                .unwrap_or_else(|| "なし".to_string())
+        } else {
+            "なし".to_string()
         };
 
-        let era_str = self.current_era().label_jp().to_string();
-
-        let might_str = if let Some(top) = self.nations.iter().max_by(|a, b| {
-            let pa = self.nation_total_pop(a);
-            let pb = self.nation_total_pop(b);
-            pa.partial_cmp(&pb).unwrap_or(std::cmp::Ordering::Equal)
-        }) {
-            let pop = self.nation_total_pop(top);
-            format!("{} ({})", top.name, pop as u64)
+        if let Some((_, name, pop)) = &land {
+            y = self.labeled_row(
+                painter,
+                x,
+                y,
+                inner_w,
+                "最大国",
+                &format!("{name} · {}人", grouped(*pop)),
+            );
         } else {
-            "-".to_string()
-        };
-
-        let overlay_label = self.overlay.label_jp();
-
-        let stats: [(&str, String); 14] = [
-            ("年",      self.year.to_string()),
-            ("時代",    era_str),
-            ("集落",    self.settlements.len().to_string()),
-            ("人口",    format!("{}", pop_total as u64)),
-            ("開拓率",  format!("{:.0}%", colonized)),
-            ("国家数",  format!("{}", self.nations.len())),
-            ("最大国",  top_nation_str),
-            ("最強国",  might_str),
-            ("戦争",    wars_str),
-            ("災害",    format!("{} ({})", self.disaster_count, last_shock)),
-            ("技術",    tech_str),
-            ("特性",    traits_str),
-            ("表示",    overlay_label.to_string()),
-            ("速度",    speed_s),
-        ];
-        for (label, value) in &stats {
-            if let Some(font) = self.font.as_ref() {
-                painter.text_font(x, y, 0.40 * FONT_GLYPH_H, dim, font, label);
-                painter.text_font(x + 72.0, y, 0.40 * FONT_GLYPH_H, ink, font, value);
-            } else {
-                painter.text(x, y, 0.40, dim, label);
-                painter.text(x + 72.0, y, 0.40, ink, value);
-            }
-            y += 18.0;
+            y = self.labeled_row(painter, x, y, inner_w, "最大国", "なし");
         }
-
-        y += 8.0;
-        painter.rect(PANEL_X + 8.0, y, PANEL_W - 16.0, 1.0, [0.30, 0.33, 0.40, 1.0]);
-        y += 8.0;
-
-        // ---- §8 population / nation history sparkline -----------------------
-        // Graph area: full panel inner width, 38 px tall.
-        {
-            const GRAPH_H: f32 = 38.0;
-            const LABEL_W: f32 = 28.0; // width reserved for label on the left
-
-            let gx = x + LABEL_W;          // graph left edge (after label)
-            let gy = y;                    // graph top edge
-            let gw = PANEL_W - 16.0 - LABEL_W; // graph drawable width
-
-            // Background
-            painter.rect(PANEL_X + 8.0, gy, PANEL_W - 16.0, GRAPH_H, [0.07, 0.08, 0.12, 1.0]);
-
-            // Population label (left of graph, vertically centered)
-            if let Some(font) = self.font.as_ref() {
-                painter.text_font(x, gy + GRAPH_H * 0.5 - 7.0, 0.34 * FONT_GLYPH_H, dim, font, "人口");
-            } else {
-                painter.text(x, gy + GRAPH_H * 0.5 - 6.0, 0.34, dim, "POP");
+        if let (Some((lid, _, _)), Some((mid, mname, mpop))) = (&land, &might) {
+            if lid != mid {
+                y = self.labeled_row(
+                    painter,
+                    x,
+                    y,
+                    inner_w,
+                    "最強国",
+                    &format!("{mname} · {}人", grouped(*mpop)),
+                );
             }
-
-            // Population bars
-            let n = self.hist_pop.len();
-            if n >= 1 {
-                let max_pop = self.hist_pop.iter().cloned().fold(1.0f32, f32::max);
-                let bar_w = (gw / n as f32).max(1.0);
-
-                for (i, &pop) in self.hist_pop.iter().enumerate() {
-                    let t = if max_pop > 0.0 { (pop / max_pop).clamp(0.0, 1.0) } else { 0.0 };
-                    let bh = (GRAPH_H * t).max(1.0);
-                    let bx = gx + i as f32 * bar_w;
-                    let by = gy + GRAPH_H - bh;
-                    painter.rect(bx, by, bar_w.max(1.0), bh, [0.85, 0.60, 0.20, 0.85]);
-                }
-            }
-
-            // Nation-count line
-            let nn = self.hist_nations.len();
-            if nn >= 1 {
-                let max_nations = self.hist_nations.iter().cloned().fold(1u16, u16::max);
-                let bar_w = (gw / nn as f32).max(1.0);
-
-                for (i, &cnt) in self.hist_nations.iter().enumerate() {
-                    let t = if max_nations > 0 {
-                        cnt as f32 / max_nations as f32
-                    } else {
-                        0.0
-                    };
-                    let ny = gy + GRAPH_H - (GRAPH_H * t).clamp(1.0, GRAPH_H);
-                    let nx = gx + i as f32 * bar_w;
-                    painter.rect(nx, ny, bar_w.max(1.0), 2.0, [0.40, 0.90, 1.00, 0.90]);
-                }
-            }
-
-            y += GRAPH_H + 6.0;
         }
-
-        painter.rect(PANEL_X + 8.0, y, PANEL_W - 16.0, 1.0, [0.30, 0.33, 0.40, 1.0]);
+        y = self.labeled_row(painter, x, y, inner_w, "戦争", &wars);
+        y = self.labeled_row(painter, x, y, inner_w, "災害", &disaster);
+        y = self.labeled_row(painter, x, y, inner_w, "技術", &tech);
+        y = self.labeled_row(painter, x, y, inner_w, "特性", &traits);
         y += 6.0;
+
         let goal = self.goal_line();
-        if let Some(font) = self.font.as_ref() {
-            painter.text_font(x, y, 0.40 * FONT_GLYPH_H, dim, font, "目標");
-            painter.text_font(x + 72.0, y, 0.40 * FONT_GLYPH_H, accent, font, &goal);
+        let frac = self.unification_frac();
+        ui_card(painter, x, y, inner_w, 48.0, UI_RAISED, UI_LINE, 1.0);
+        self.tx(painter, x + 12.0, y + 8.0, 12.0, UI_DIM, "目標");
+        let goal_w = self.tx_w(painter, 13.0, &goal);
+        self.tx(
+            painter,
+            x + inner_w - 12.0 - goal_w,
+            y + 7.0,
+            13.0,
+            UI_GOLD,
+            &goal,
+        );
+        painter.rect(x + 12.0, y + 30.0, inner_w - 24.0, 6.0, UI_TRACK);
+        painter.rect(x + 12.0, y + 30.0, (inner_w - 24.0) * frac, 6.0, UI_GOLD);
+        y += 60.0;
+
+        self.section_title(painter, x, y, "推移");
+        let legend_pop = "人口";
+        let legend_n = "国家";
+        let ln_w = self.tx_w(painter, 12.0, legend_n);
+        let lp_w = self.tx_w(painter, 12.0, legend_pop);
+        let legend_x = x + inner_w - (8.0 + ln_w + 16.0 + 8.0 + lp_w);
+        painter.rect(legend_x, y + 4.0, 8.0, 8.0, UI_AMBER);
+        self.tx(painter, legend_x + 12.0, y, 12.0, UI_DIM, legend_pop);
+        let nx = legend_x + 12.0 + lp_w + 12.0;
+        painter.rect(nx, y + 4.0, 8.0, 8.0, UI_ACCENT);
+        self.tx(painter, nx + 12.0, y, 12.0, UI_DIM, legend_n);
+        y += 22.0;
+
+        let plot_h = 64.0;
+        ui_card(painter, x, y, inner_w, plot_h, UI_RAISED, UI_LINE, 1.0);
+        let plot_x = x + 8.0;
+        let plot_y = y + 6.0;
+        let plot_w = inner_w - 16.0;
+        let plot_inner_h = plot_h - 12.0;
+        let n = self.hist_pop.len();
+        if n == 0 {
+            painter.rect(plot_x, plot_y + plot_inner_h * 0.5, plot_w, 1.0, UI_LINE);
+            self.tx(
+                painter,
+                plot_x + 8.0,
+                plot_y + 18.0,
+                13.0,
+                UI_DIM,
+                "まだ推移はない",
+            );
         } else {
-            painter.text(x, y, 0.40, dim, "GOAL");
-            painter.text(x + 72.0, y, 0.40, accent, &goal);
-        }
-        y += 18.0;
-        painter.rect(PANEL_X + 8.0, y, PANEL_W - 16.0, 1.0, [0.30, 0.33, 0.40, 1.0]);
-        y += 8.0;
-        if let Some(font) = self.font.as_ref() {
-            painter.text_font(x, y, 0.42 * FONT_GLYPH_H, accent, font, "年代記");
-        } else {
-            painter.text(x, y, 0.42, accent, "CHRONICLE");
-        }
-        y += 20.0;
-        for line in &self.log {
-            if let Some(font) = self.font.as_ref() {
-                painter.text_font(x, y, 0.34 * FONT_GLYPH_H, ink, font, line);
-            } else {
-                painter.text(x, y, 0.34, ink, line);
+            // Headroom keeps a flat stretch from painting as a solid block.
+            let max_pop = self.hist_pop.iter().cloned().fold(1.0f32, f32::max) * 1.18;
+            let bar_w = plot_w / (n as f32).max(8.0);
+            for (i, &pop) in self.hist_pop.iter().enumerate() {
+                let t = (pop / max_pop).clamp(0.0, 1.0);
+                let bh = (plot_inner_h * t).max(1.0);
+                painter.rect(
+                    plot_x + i as f32 * bar_w,
+                    plot_y + plot_inner_h - bh,
+                    bar_w.max(1.0),
+                    bh,
+                    [UI_AMBER[0], UI_AMBER[1], UI_AMBER[2], 0.55],
+                );
             }
-            y += 15.0;
+            painter.rect(plot_x, plot_y + plot_inner_h * 0.5, plot_w, 1.0, UI_LINE);
+            let stroke = [1.0, 0.78, 0.42, 1.0];
+            for (i, &pop) in self.hist_pop.iter().enumerate() {
+                let t = (pop / max_pop).clamp(0.0, 1.0);
+                let ny = plot_y + plot_inner_h - (plot_inner_h * t).max(1.0);
+                painter.rect(
+                    plot_x + i as f32 * bar_w,
+                    ny,
+                    (bar_w + 1.0).max(2.0),
+                    2.0,
+                    stroke,
+                );
+            }
         }
+        let nn = self.hist_nations.len();
+        if nn >= 1 {
+            let max_nations =
+                (self.hist_nations.iter().cloned().fold(1u16, u16::max) as f32) * 1.18;
+            let bar_w = plot_w / (nn as f32).max(8.0);
+            for (i, &cnt) in self.hist_nations.iter().enumerate() {
+                let t = (cnt as f32 / max_nations).clamp(0.0, 1.0);
+                let ny = plot_y + plot_inner_h - (plot_inner_h * t).max(1.0);
+                painter.rect(
+                    plot_x + i as f32 * bar_w,
+                    ny,
+                    (bar_w + 1.0).max(2.0),
+                    2.0,
+                    UI_ACCENT,
+                );
+            }
+        }
+        y += plot_h + 14.0;
+
+        let list_bot = MAP_Y + MAP_H - 12.0;
+        if list_bot > y + 36.0 {
+            ui_card(
+                painter,
+                x,
+                y,
+                inner_w,
+                list_bot - y,
+                UI_RAISED,
+                UI_LINE,
+                1.0,
+            );
+            self.section_title(painter, x + 12.0, y + 10.0, "年代記");
+            let row_h = 20.0;
+            let first = y + 34.0;
+            let slots = ((list_bot - 10.0 - first) / row_h).floor().max(0.0) as usize;
+            let start = self.log.len().saturating_sub(slots);
+            if self.log.is_empty() {
+                self.tx(painter, x + 12.0, first, 13.0, UI_DIM, "まだ記録はない");
+            } else {
+                for (i, line) in self.log.iter().skip(start).enumerate() {
+                    let ly = first + i as f32 * row_h;
+                    let (year, body) = chronicle_parts(line);
+                    if year.is_empty() {
+                        self.tx(painter, x + 12.0, ly, 13.0, UI_INK, &body);
+                    } else {
+                        let yw = self.tx_w(painter, 12.0, &year);
+                        self.tx(
+                            painter,
+                            x + 12.0 + 28.0 - yw,
+                            ly + 1.0,
+                            12.0,
+                            UI_ACCENT,
+                            &year,
+                        );
+                        self.tx(painter, x + 48.0, ly, 13.0, UI_INK, &body);
+                    }
+                }
+            }
+        }
+    }
+
+    fn metric(
+        &self,
+        painter: &mut Painter,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        label: &str,
+        value: &str,
+    ) {
+        ui_card(painter, x, y, w, h, UI_RAISED, UI_LINE, 1.0);
+        self.tx(painter, x + 12.0, y + 8.0, 12.0, UI_DIM, label);
+        self.tx(painter, x + 12.0, y + 26.0, 18.0, UI_INK, value);
     }
 
     pub(crate) fn draw_status(&self, painter: &mut Painter) {
-        let y = MAP_Y + MAP_H + 6.0;
-        let dim = [0.55, 0.60, 0.70, 1.0];
-        // The 3D pass paints the whole framebuffer, including this strip.
-        // Cover it so the hint sits on the same dark band as the 2D view.
-        let screen_w = PANEL_X + PANEL_W + MARGIN;
-        painter.rect(0.0, MAP_Y + MAP_H, screen_w, 48.0, [0.06, 0.07, 0.10, 1.0]);
+        let (sw, _) = screen_px();
+        let y0 = MAP_Y + MAP_H;
+        painter.rect(0.0, y0, sw, CHROME_H, UI_DOCK);
+        painter.rect(0.0, y0, sw, 1.0, UI_LINE);
 
-        // Line 1 matches 2D. Camera keys go on line 2, which has the room.
-        let line1 = "[Space]停止  [1-4]速度  [5]調べ [6]上げ [7]恵 [8]建国  [O]表示 [G]画風 [H]ヘルプ";
-        let cam = if self.art_style == ArtStyle::Solid3D {
-            "  [Q/E]回転 [Z/X]仰角"
+        let cy = y0 + 10.0;
+        let mut x = 16.0;
+        let pause = if self.paused { "停止中" } else { "停止" };
+        let pause_tone = if self.paused {
+            ChipTone::On
         } else {
-            ""
+            ChipTone::Quiet
         };
-        let line2 = format!(
-            "信仰 {:.0}  道具:{}  目標:{}  {} / {}  SEED {}{}",
-            self.faith,
-            self.god_tool.label_jp(),
-            self.goal_line(),
-            self.scenario.label_jp(),
-            self.art_style.label_jp(),
-            self.seed,
-            cam
-        );
-        let px = 0.34 * FONT_GLYPH_H;
-        let max_w = screen_w - MAP_X - 8.0;
-        if let Some(font) = self.font.as_ref() {
-            painter.text_font(MAP_X, y, px, dim, font, line1);
-            let shown = if painter.text_font_width(px, font, &line2) <= max_w {
-                line2
+        x += self.chip(painter, x, cy, pause, "Space", pause_tone) + 16.0;
+
+        self.tx(painter, x, cy + 7.0, 12.0, UI_DIM, "速度");
+        x += self.tx_w(painter, 12.0, "速度") + 8.0;
+        for s in 1..=4u8 {
+            let tone = if self.speed == s {
+                ChipTone::On
             } else {
-                format!(
-                    "信仰 {:.0}  道具:{}  目標:{}  {}{}",
-                    self.faith,
-                    self.god_tool.label_jp(),
-                    self.goal_line(),
-                    self.art_style.label_jp(),
-                    cam
-                )
+                ChipTone::Quiet
             };
-            painter.text_font(MAP_X, y + 18.0, px, dim, font, &shown);
+            x += self.square_chip(painter, x, cy, &s.to_string(), tone) + 6.0;
+        }
+        x += 12.0;
+
+        let tools = [
+            (GodTool::Inspect, "5"),
+            (GodTool::Raise, "6"),
+            (GodTool::Grace, "7"),
+            (GodTool::Found, "8"),
+        ];
+        for (tool, key) in tools {
+            let tone = if self.god_tool == tool {
+                ChipTone::Warm
+            } else {
+                ChipTone::Quiet
+            };
+            x += self.chip(painter, x, cy, tool.label_jp(), key, tone) + 6.0;
+        }
+        x += 12.0;
+        x += self.chip(
+            painter,
+            x,
+            cy,
+            self.overlay.label_jp(),
+            "O",
+            ChipTone::Quiet,
+        ) + 6.0;
+        let art_name = if self.font.is_some() {
+            self.art_style.label_jp()
         } else {
-            painter.text(MAP_X, y, 0.34, dim, line1);
-            painter.text(MAP_X, y + 18.0, 0.34, dim, &line2);
+            self.art_style.label()
+        };
+        x += self.chip(painter, x, cy, art_name, "G", ChipTone::Quiet) + 6.0;
+        let _ = self.chip(painter, x, cy, "ヘルプ", "H", ChipTone::Quiet);
+
+        let faith_w = 168.0;
+        let faith_x = sw - 16.0 - faith_w;
+        if faith_x > x + self.chip_width(painter, "ヘルプ", "H") + 20.0 {
+            self.tx(painter, faith_x, cy + 7.0, 12.0, UI_DIM, "信仰");
+            let bar_x = faith_x + 32.0;
+            let frac = (self.faith / FAITH_MAX).clamp(0.0, 1.0);
+            painter.rect(bar_x, cy + 11.0, 88.0, 6.0, UI_TRACK);
+            let col = if self.faith < 10.0 { UI_RED } else { UI_ACCENT };
+            painter.rect(bar_x, cy + 11.0, 88.0 * frac, 6.0, col);
+            self.tx(
+                painter,
+                bar_x + 96.0,
+                cy + 7.0,
+                12.0,
+                UI_INK,
+                &format!("{:.0}", self.faith),
+            );
+        }
+
+        let meta_y = cy + 36.0;
+        self.tx(
+            painter,
+            16.0,
+            meta_y,
+            12.0,
+            UI_DIM,
+            self.scenario.label_jp(),
+        );
+        self.tx(painter, 92.0, meta_y, 12.0, UI_DIM, "目標");
+        let bar_x = 128.0;
+        painter.rect(bar_x, meta_y + 5.0, 72.0, 5.0, UI_TRACK);
+        painter.rect(
+            bar_x,
+            meta_y + 5.0,
+            72.0 * self.unification_frac(),
+            5.0,
+            UI_GOLD,
+        );
+        let goal = self.goal_line();
+        self.tx(painter, bar_x + 80.0, meta_y, 12.0, UI_INK, &goal);
+
+        let seed = self.seed.to_string();
+        let seed_w = self.tx_w(painter, 12.0, &seed);
+        let mut right = sw - 16.0;
+        self.tx(painter, right - seed_w, meta_y, 12.0, UI_DIM, &seed);
+        right -= seed_w + 8.0;
+        let seed_label_w = self.tx_w(painter, 12.0, "シード");
+        self.tx(
+            painter,
+            right - seed_label_w,
+            meta_y,
+            12.0,
+            UI_DIM,
+            "シード",
+        );
+        right -= seed_label_w + 22.0;
+        if self.art_style == ArtStyle::Solid3D {
+            let cam = "Q E 回転    Z X 仰角";
+            let cw = self.tx_w(painter, 12.0, cam);
+            self.tx(painter, right - cw, meta_y, 12.0, UI_DIM, cam);
         }
     }
 
-    /// Win or loss banner. The sim pauses when the flag first flips.
     pub(crate) fn draw_outcome(&self, painter: &mut Painter) {
-        let (text, color): (&str, Color) = if self.extinction_logged {
-            ("人々は滅びた", [0.95, 0.40, 0.28, 1.0])
+        let (title, accent): (&str, Color) = if self.extinction_logged {
+            ("人々は滅びた", UI_RED)
         } else if self.unification_logged {
-            ("大陸は統一された", [1.0, 0.90, 0.40, 1.0])
+            ("大陸は統一された", UI_GOLD)
         } else {
             return;
         };
-        let bw = 360.0;
-        let bh = 44.0;
+        let bw = 460.0;
+        let bh = 96.0;
         let bx = MAP_X + (MAP_W - bw) * 0.5;
-        let by = MAP_Y + 18.0;
-        painter.rect(bx, by, bw, bh, [0.05, 0.06, 0.10, 0.88]);
-        if let Some(font) = self.font.as_ref() {
-            let px = 0.62 * FONT_GLYPH_H;
-            let w = painter.text_font_width(px, font, text);
-            painter.text_font(bx + (bw - w) * 0.5, by + 8.0, px, color, font, text);
-        } else {
-            painter.text(bx + 24.0, by + 10.0, 0.55, color, text);
-        }
+        let by = MAP_Y + 28.0;
+        painter.rect(bx + 5.0, by + 7.0, bw, bh, [0.0, 0.0, 0.0, 0.32]);
+        ui_card(painter, bx, by, bw, bh, UI_PANEL, accent, 2.0);
+        self.tx_centered(painter, bx + bw * 0.5, by + 22.0, 26.0, accent, title);
+        self.tx_centered(
+            painter,
+            bx + bw * 0.5,
+            by + 58.0,
+            14.0,
+            UI_DIM,
+            "時間は止まっています",
+        );
     }
 
-    /// Font-aware text helper: dispatches to `text_font` if a font is loaded,
-    /// else falls back to the built-in bitmap `text`.
-    pub(crate) fn pt(&self, painter: &mut Painter, x: f32, y: f32, scale: f32, color: Color, text: &str) {
-        if let Some(font) = self.font.as_ref() {
-            painter.text_font(x, y, scale * FONT_GLYPH_H, color, font, text);
-        } else {
-            painter.text(x, y, scale, color, text);
-        }
-    }
-
-    /// §8 readability: tile inspector box (left-click in Observe mode).
     pub(crate) fn draw_selection_panel(&self, painter: &mut Painter) {
         let Some(ti) = self.selected_tile else {
             return;
         };
         let col = ti % COLS;
         let row = ti / COLS;
-
         let (hx, hy, hsize) = view_tile(col, row, self.view_pan, self.view_zoom);
-        let hl = [1.0, 0.95, 0.4, 1.0];
+        let hl = UI_GOLD;
         let b = 2.0;
         painter.rect(hx, hy, hsize, b, hl);
         painter.rect(hx, hy + hsize - b, hsize, b, hl);
         painter.rect(hx, hy, b, hsize, hl);
         painter.rect(hx + hsize - b, hy, b, hsize, hl);
 
-        let bw = 252.0;
-        let bh = 164.0;
-        let bx = MAP_X + 6.0;
-        let by = MAP_Y + MAP_H - bh - 6.0;
-        painter.rect(bx, by, bw, bh, [0.06, 0.07, 0.11, 0.88]);
-        let ink = [0.86, 0.89, 0.96, 1.0];
-        let dim = [0.55, 0.60, 0.70, 1.0];
-        let acc = [0.6, 0.85, 1.0, 1.0];
-        let x = bx + 8.0;
-        let mut y = by + 8.0;
         let tile = self.tiles[ti];
-
-        self.pt(painter, x, y, 0.42, acc, "調査");
-        y += 16.0;
-        self.pt(painter, x, y, 0.34, dim, &format!("座標 {},{} / {}", col, row, tile.terrain.tile_name_jp()));
-        y += 14.0;
-        self.pt(painter, x, y, 0.34, ink,
-            &format!("K {:.0}   {}", tile.k, if tile.habitable { "居住可" } else { "不毛" }),
-        );
-        y += 14.0;
+        let mut lines: Vec<(String, String, Color)> = Vec::new();
+        lines.push((
+            "地形".to_string(),
+            tile.terrain.tile_name_jp().to_string(),
+            UI_INK,
+        ));
+        lines.push((
+            "収容".to_string(),
+            format!(
+                "{:.0} · {}",
+                tile.k,
+                if tile.habitable {
+                    "居住可"
+                } else {
+                    "不毛"
+                }
+            ),
+            UI_INK,
+        ));
         if ti < self.resources.len() && self.resources[ti] != Resource::None {
             let res_color = match self.resources[ti] {
-                Resource::Iron   => [0.75, 0.80, 0.90, 1.0],
-                Resource::Horses => [0.80, 0.65, 0.35, 1.0],
-                Resource::Gold   => [1.00, 0.85, 0.20, 1.0],
-                Resource::None   => ink,
+                Resource::Iron => [0.78, 0.82, 0.90, 1.0],
+                Resource::Horses => [0.86, 0.68, 0.38, 1.0],
+                Resource::Gold => UI_GOLD,
+                Resource::None => UI_INK,
             };
-            self.pt(painter, x, y, 0.34, res_color,
-                &format!("資源: {}", self.resources[ti].label_jp()));
-            y += 14.0;
+            lines.push((
+                "資源".to_string(),
+                self.resources[ti].label_jp().to_string(),
+                res_color,
+            ));
         }
 
         let si = self.occupied[ti];
         if si >= 0 {
             let s = &self.settlements[si as usize];
-            let mut techs = String::new();
-            if s.tech & TECH_IRRIGATION != 0 { techs.push_str("灌漑 "); }
-            if s.tech & TECH_SEAFARING != 0  { techs.push_str("航海 "); }
-            if s.tech & TECH_METALLURGY != 0 { techs.push_str("冶金 "); }
-            if s.tech & TECH_WRITING != 0    { techs.push_str("文字 "); }
-            if techs.is_empty() { techs.push('-'); }
-            let settlement_label = if s.city { "都市" } else { "集落" };
-            let city_color: Color = if s.city { [0.30, 0.90, 0.95, 1.0] } else { ink };
-            let inspired_suffix = if s.inspired_years > 0 { " (鼓舞中)" } else { "" };
-            self.pt(painter, x, y, 0.34, city_color, &format!("{} 人口 {:.0}  停滞 {}{}", settlement_label, s.pop, s.stuck, inspired_suffix));
-            y += 14.0;
-            if s.city {
-                self.pt(painter, x, y, 0.34, city_color, "** 都市 **  上限+10%");
-                y += 14.0;
+            let kind = if s.city { "都市" } else { "集落" };
+            let mut pop = grouped(s.pop as u64);
+            if s.stuck > 0 {
+                pop.push_str(&format!(" · 停滞 {}", s.stuck));
             }
-            self.pt(painter, x, y, 0.34, ink, &format!("技術 {}", techs.trim()));
-            y += 14.0;
-            self.pt(painter, x, y, 0.34, ink, &format!("特性 {}", traits_display(s.traits)));
-            y += 14.0;
+            if s.inspired_years > 0 {
+                pop.push_str(" · 鼓舞");
+            }
+            let kind_color = if s.city { UI_ACCENT } else { UI_INK };
+            lines.push(("人".to_string(), format!("{kind} · {pop}"), kind_color));
+            lines.push(("技術".to_string(), Continent::tech_display(s.tech), UI_INK));
+            lines.push(("特性".to_string(), traits_display(s.traits), UI_INK));
             let nid = self.nation_of.get(si as usize).copied().unwrap_or(-1);
             if nid >= 0 {
                 if let Some(n) = self.nations.iter().find(|n| n.id as i32 == nid) {
-                    let total_pop = self.nation_total_pop(n);
-                    let golden_suffix = if n.golden { " (黄金時代)" } else { "" };
-                    self.pt(painter, x, y, 0.34, acc, &format!("{} ({} 集落, 人口 {}){}", n.name, n.territory.len(), total_pop as u64, golden_suffix));
-                    y += 14.0;
-                    self.pt(painter, x, y, 0.34, ink, &format!("文化 #{} | 交易 {} 国", n.culture, n.trade_partners));
-                    y += 14.0;
-                    let mut why = String::new();
-                    if n.traits & TRAIT_DISCIPLINE != 0        { why.push_str("武力 "); }
-                    if n.traits & TRAIT_COMMERCE != 0          { why.push_str("商業 "); }
-                    if n.traits & TRAIT_SEAFARING_TRAIT != 0   { why.push_str("海洋 "); }
-                    if n.traits & TRAIT_MASONRY != 0           { why.push_str("石工 "); }
-                    if n.tech & TECH_WRITING != 0              { why.push_str("識字 "); }
-                    if why.is_empty() { why.push_str("農耕"); }
-                    self.pt(painter, x, y, 0.32, dim, why.trim());
-                }
-            } else {
-                self.pt(painter, x, y, 0.34, dim, "無国籍");
-            }
-        } else {
-            self.pt(painter, x, y, 0.34, dim, "未開地");
-        }
-    }
-
-    // ---- help overlay (render-only, no sim state) --------------------------
-
-    /// Draws a semi-transparent HELP overlay listing all controls, grouped by
-    /// category.  Activated with [H].  Render-only: reads no sim state and
-    /// never calls any mutating method, so determinism is unaffected.
-    pub(crate) fn draw_help_overlay(&self, painter: &mut Painter) {
-        // Backing rect — covers most of the map area for readability.
-        let bx = MAP_X + 8.0;
-        let by = MAP_Y + 8.0;
-        let bw = MAP_W - 16.0;
-        let bh = MAP_H - 16.0;
-        painter.rect(bx, by, bw, bh, [0.04, 0.05, 0.10, 0.92]);
-
-        let ink:   Color = [0.88, 0.92, 1.00, 1.0];
-        let dim:   Color = [0.55, 0.62, 0.75, 1.0];
-        let head:  Color = [0.55, 0.85, 1.00, 1.0];
-        let key_c: Color = [1.00, 0.90, 0.40, 1.0];
-
-        let col1 = bx + 12.0;
-        let col2 = bx + bw * 0.50;
-        let mut ly = by + 14.0;
-
-        // ---- Title ----
-        self.pt(painter, col1, ly, 0.52, head, "操作ガイド   [H] 閉じる");
-        ly += 24.0;
-
-        // Layout: two columns side by side.
-        // Left column controls.
-        let left: &[(&str, &str)] = &[
-            // TIME
-            ("-- 時間 --",           ""),
-            ("Space",                "一時停止 / 再開"),
-            ("1 / 2 / 3 / 4",        "速度 x1/x2/x3/x4"),
-            ("",                     ""),
-            // VIEW
-            ("-- 表示 --",           ""),
-            ("O",                    "重ね表示 (地形/収容力/人口/国家/技術/資源)"),
-            ("G",                    "画風 (ピクセル / ジオラマ / 3D)"),
-            ("5 / 6 / 7 / 8",        "調べる / 上げる / 恵み / 建国"),
-            ("click",                "選んだ神の手を使う"),
-            ("+  /  -",              "ズームイン / アウト"),
-            ("矢印キー",             "マップ移動"),
-            ("",                     ""),
-            // 3D CAMERA
-            ("-- 3Dカメラ --",       ""),
-            ("Q / E",                "方位回転"),
-            ("Z / X",                "仰角変更"),
-        ];
-
-        // Right column controls.
-        let right: &[(&str, &str)] = &[
-            // INTERVENE
-            ("-- 介入 --",           ""),
-            ("P",                    "地形プリセット"),
-            ("R",                    "新世界生成"),
-            ("M",                    "モード切替 (観察 / 編集)"),
-            ("T  (編集モード)",      "ツール切替 (塗装/災害/恵/鼓舞/建国)"),
-            ("左クリック (編集)",    "ツール適用"),
-            ("右クリック (編集)",    "逆方向適用"),
-            ("スクロール (編集)",    "K値調整"),
-            ("",                     ""),
-            // SHARE
-            ("-- 共有 --",           ""),
-            ("?seed=N",              "URL: このワールドを再現"),
-            ("?scenario=",           "標準・パンゲア・群島・高地"),
-            (" ",                    "乾燥・氷河期・火山帯・豊穣"),
-            ("",                     ""),
-            ("H",                    "このヘルプを閉じる"),
-        ];
-
-        let row_h = 17.0;
-        let key_w = 130.0; // width allocated for key column
-
-        let mut left_y  = ly;
-        let mut right_y = ly;
-
-        for &(key, val) in left {
-            if key.is_empty() {
-                left_y += row_h * 0.5;
-                continue;
-            }
-            if val.is_empty() {
-                // Section heading.
-                self.pt(painter, col1, left_y, 0.38, head, key);
-            } else {
-                self.pt(painter, col1, left_y, 0.36, key_c, key);
-                self.pt(painter, col1 + key_w, left_y, 0.36, ink, val);
-            }
-            left_y += row_h;
-        }
-
-        for &(key, val) in right {
-            if key.is_empty() {
-                right_y += row_h * 0.5;
-                continue;
-            }
-            if val.is_empty() {
-                // Section heading.
-                self.pt(painter, col2, right_y, 0.38, head, key);
-            } else {
-                self.pt(painter, col2, right_y, 0.36, key_c, key);
-                self.pt(painter, col2 + key_w, right_y, 0.36, ink, val);
-            }
-            right_y += row_h;
-        }
-
-        // Footer dim line.
-        let footer_y = by + bh - 18.0;
-        self.pt(painter, col1, footer_y, 0.34, dim, "画風: ピクセル/ジオラマ/3D (G)   表示: 地形/収容力/人口/国家/技術/資源 (O)");
-    }
-
-    // ---- title / setup screens -----------------------------------------------
-
-    /// Draws the full-screen title card (Phase::Title).
-    pub(crate) fn draw_title(&self, painter: &mut Painter) {
-        use crate::{MAP_Y, MAP_H, PANEL_W, MARGIN, PANEL_X};
-        let sw = PANEL_X + PANEL_W + MARGIN;
-        let sh = MAP_Y + MAP_H + 48.0;
-
-        // Background.
-        painter.rect(0.0, 0.0, sw, sh, [0.04, 0.05, 0.10, 1.0]);
-
-        let cx = sw * 0.5;
-        let title_y  = sh * 0.28;
-        let tag_y    = title_y + 60.0;
-        let hint_y   = sh * 0.72;
-
-        let title_c: Color = [0.55, 0.85, 1.00, 1.0];
-        let tag_c:   Color = [0.68, 0.78, 0.95, 1.0];
-        let hint_c:  Color = [0.50, 0.55, 0.68, 1.0];
-
-        // Animated star-field: deterministic dots scattered using tile hash.
-        for i in 0u32..120 {
-            let hx = i.wrapping_mul(0x9e37_79b9) ^ (i << 13);
-            let hy = i.wrapping_mul(0x6c62_272e) ^ (i >> 5);
-            let sx = (hx % (sw as u32)) as f32;
-            let sy = (hy % (sh as u32)) as f32;
-            let phase = (i as f32 * 0.618 + self.elapsed_secs * 0.7) % std::f32::consts::TAU;
-            let alpha = 0.15 + 0.25 * (phase.sin() * 0.5 + 0.5);
-            painter.rect(sx, sy, 2.0, 2.0, [0.7, 0.8, 1.0, alpha]);
-        }
-
-        if let Some(font) = self.font.as_ref() {
-            // Title (Japanese): "大陸シミュレーター"
-            let title_text = "大陸シミュレーター";
-            let title_px = 1.20 * FONT_GLYPH_H;
-            let title_w = painter.text_font_width(title_px, font, title_text);
-            painter.text_font(cx - title_w * 0.5, title_y, title_px, title_c, font, title_text);
-
-            // Tagline.
-            let tag = "手続き生成の文明サンドボックス";
-            let tag_px = 0.50 * FONT_GLYPH_H;
-            let tag_w = painter.text_font_width(tag_px, font, tag);
-            painter.text_font(cx - tag_w * 0.5, tag_y, tag_px, tag_c, font, tag);
-
-            // Prompt (pulse alpha).
-            let prompt = "-- スペース または クリック で開始 --";
-            let prompt_px = 0.44 * FONT_GLYPH_H;
-            let alpha = 0.55 + 0.45 * (self.elapsed_secs * 1.8).sin();
-            let prompt_c: Color = [hint_c[0], hint_c[1], hint_c[2], alpha];
-            let prompt_w = painter.text_font_width(prompt_px, font, prompt);
-            painter.text_font(cx - prompt_w * 0.5, hint_y, prompt_px, prompt_c, font, prompt);
-        } else {
-            // ASCII fallback.
-            let title_text = "CONTINENT SIM";
-            let title_scale = 1.20;
-            let char_w = 8.0 * title_scale;
-            let title_w = title_text.len() as f32 * char_w;
-            painter.text(cx - title_w * 0.5, title_y, title_scale, title_c, title_text);
-
-            let tag = "A procedural civilization sandbox";
-            let tag_scale = 0.50;
-            let tag_w = tag.len() as f32 * 8.0 * tag_scale;
-            painter.text(cx - tag_w * 0.5, tag_y, tag_scale, tag_c, tag);
-
-            let prompt = "-- PRESS SPACE or CLICK to continue --";
-            let prompt_scale = 0.44;
-            let alpha = 0.55 + 0.45 * (self.elapsed_secs * 1.8).sin();
-            let prompt_c: Color = [hint_c[0], hint_c[1], hint_c[2], alpha];
-            let prompt_w = prompt.len() as f32 * 8.0 * prompt_scale;
-            painter.text(cx - prompt_w * 0.5, hint_y, prompt_scale, prompt_c, prompt);
-        }
-    }
-
-    /// Draws the scenario-selection Setup screen (Phase::Setup).
-    pub(crate) fn draw_setup(&self, painter: &mut Painter) {
-        use crate::{MAP_Y, MAP_H, PANEL_W, MARGIN, PANEL_X, SCENARIOS};
-        let sw = PANEL_X + PANEL_W + MARGIN;
-        let sh = MAP_Y + MAP_H + 48.0;
-
-        // Background.
-        painter.rect(0.0, 0.0, sw, sh, [0.04, 0.05, 0.10, 1.0]);
-
-        let cx = sw * 0.5;
-        let title_c: Color = [0.55, 0.85, 1.00, 1.0];
-        let ink:     Color = [0.85, 0.88, 0.95, 1.0];
-        let dim:     Color = [0.55, 0.60, 0.70, 1.0];
-        let sel_c:   Color = [1.00, 0.90, 0.40, 1.0];
-
-        if let Some(font) = self.font.as_ref() {
-            // Heading.
-            let head = "シナリオを選んでください";
-            let head_px = 0.68 * FONT_GLYPH_H;
-            let head_w = painter.text_font_width(head_px, font, head);
-            painter.text_font(cx - head_w * 0.5, 40.0, head_px, title_c, font, head);
-
-            // Sub-hint.
-            let sub = "[< >] または [1-8] で選択   [G] 画風   [SPACE] 開始";
-            let sub_px = 0.38 * FONT_GLYPH_H;
-            let sub_w = painter.text_font_width(sub_px, font, sub);
-            painter.text_font(cx - sub_w * 0.5, 80.0, sub_px, dim, font, sub);
-
-            // Scenario list (2 columns of 4).
-            let col_left  = cx - 240.0;
-            let col_right = cx + 20.0;
-            let row_start_y = 120.0;
-            let row_h = 40.0;
-
-            for (i, scenario) in SCENARIOS.iter().enumerate() {
-                let col_x = if i < 4 { col_left } else { col_right };
-                let row   = if i < 4 { i } else { i - 4 };
-                let y     = row_start_y + row as f32 * row_h;
-
-                let is_sel = i == self.setup_scenario_idx;
-                let color  = if is_sel { sel_c } else { ink };
-                let scale  = if is_sel { 0.52 } else { 0.42 };
-                let px     = scale * FONT_GLYPH_H;
-                let badge_px = scale * 0.85 * FONT_GLYPH_H;
-
-                // Number badge.
-                let badge = format!("[{}]", i + 1);
-                painter.text_font(col_x, y, badge_px, dim, font, &badge);
-
-                // Scenario name (Japanese).
-                let name = scenario.label_jp();
-                painter.text_font(col_x + 38.0, y, px, color, font, name);
-
-                // Selection arrow.
-                if is_sel {
-                    painter.text_font(col_x - 18.0, y, px, sel_c, font, "▶");
-                }
-            }
-
-            // Blurb and a small terrain preview of the world generate() already built.
-            let blurb = SCENARIOS[self.setup_scenario_idx].blurb_jp();
-            let blurb_px = 0.38 * FONT_GLYPH_H;
-            let blurb_w = painter.text_font_width(blurb_px, font, blurb);
-            painter.text_font(cx - blurb_w * 0.5, 290.0, blurb_px, ink, font, blurb);
-            if !self.tiles.is_empty() {
-                let cell = 3.2;
-                let ox = cx - COLS as f32 * cell * 0.5;
-                let oy = 320.0;
-                for row in 0..ROWS {
-                    for col in 0..COLS {
-                        let c = self.tiles[idx(col, row)].terrain.base_color();
-                        painter.rect(ox + col as f32 * cell, oy + row as f32 * cell, cell, cell, c);
+                    let total_pop = self.nation_total_pop(n) as u64;
+                    let mut banner = format!(
+                        "{} · {}集落 · {}人",
+                        n.name,
+                        n.territory.len(),
+                        grouped(total_pop)
+                    );
+                    if n.golden {
+                        banner.push_str(" · 黄金期");
                     }
+                    lines.push(("国家".to_string(), banner, UI_ACCENT));
+                    lines.push(("文化".to_string(), n.culture.to_string(), UI_INK));
+                    lines.push((
+                        "交易".to_string(),
+                        format!("{}か国", n.trade_partners),
+                        UI_INK,
+                    ));
                 }
+            } else {
+                lines.push(("国家".to_string(), "無国籍".to_string(), UI_DIM));
             }
-
-            // Art style indicator.
-            let art_str = format!("画風: {}  (G で切替)", self.art_style.label_jp());
-            let art_px = 0.40 * FONT_GLYPH_H;
-            let art_w = painter.text_font_width(art_px, font, &art_str);
-            painter.text_font(cx - art_w * 0.5, sh - 50.0, art_px, dim, font, &art_str);
-
-            // START prompt at bottom.
-            let start = "-- スペース で開始 --";
-            let start_px = 0.48 * FONT_GLYPH_H;
-            let alpha = 0.55 + 0.45 * (self.elapsed_secs * 1.6).sin();
-            let start_c: Color = [0.55, 0.85, 1.00, alpha];
-            let start_w = painter.text_font_width(start_px, font, start);
-            painter.text_font(cx - start_w * 0.5, sh - 28.0, start_px, start_c, font, start);
         } else {
-            // ASCII fallback.
-            let head = "CHOOSE SCENARIO";
-            let head_scale = 0.68;
-            let head_w = head.len() as f32 * 8.0 * head_scale;
-            painter.text(cx - head_w * 0.5, 40.0, head_scale, title_c, head);
+            lines.push(("人".to_string(), "未開地".to_string(), UI_DIM));
+        }
 
-            let sub = "[< >] or [1-8] to select   [G] art style   [SPACE] start";
-            let sub_scale = 0.38;
-            let sub_w = sub.len() as f32 * 8.0 * sub_scale;
-            painter.text(cx - sub_w * 0.5, 80.0, sub_scale, dim, sub);
+        let bw = 300.0;
+        let bh = 52.0 + lines.len() as f32 * 24.0;
+        let bx = MAP_X + 16.0;
+        let by = MAP_Y + MAP_H - bh - 16.0;
+        painter.rect(bx + 4.0, by + 6.0, bw, bh, [0.0, 0.0, 0.0, 0.30]);
+        ui_card(painter, bx, by, bw, bh, UI_PANEL, UI_LINE, 1.0);
+        painter.rect(bx + 1.0, by + 1.0, bw - 2.0, 3.0, UI_ACCENT);
+        self.tx(painter, bx + 16.0, by + 16.0, 16.0, UI_INK, "調査");
+        let coord = format!("{col}, {row}");
+        let cw = self.tx_w(painter, 12.0, &coord);
+        self.tx(
+            painter,
+            bx + bw - 16.0 - cw,
+            by + 18.0,
+            12.0,
+            UI_DIM,
+            &coord,
+        );
 
-            let col_left  = cx - 240.0;
-            let col_right = cx + 20.0;
-            let row_start_y = 120.0;
-            let row_h = 40.0;
-
-            for (i, scenario) in SCENARIOS.iter().enumerate() {
-                let col_x = if i < 4 { col_left } else { col_right };
-                let row   = if i < 4 { i } else { i - 4 };
-                let y     = row_start_y + row as f32 * row_h;
-                let is_sel = i == self.setup_scenario_idx;
-                let color  = if is_sel { sel_c } else { ink };
-                let scale  = if is_sel { 0.52 } else { 0.42 };
-                let badge = format!("[{}]", i + 1);
-                painter.text(col_x, y, scale * 0.85, dim, &badge);
-                painter.text(col_x + 38.0, y, scale, color, scenario.label());
-                if is_sel {
-                    painter.text(col_x - 16.0, y, scale, sel_c, ">");
-                }
-            }
-
-            let art_str = format!("Art: {}  (G to cycle)", self.art_style.label());
-            let art_scale = 0.40;
-            let art_w = art_str.len() as f32 * 8.0 * art_scale;
-            painter.text(cx - art_w * 0.5, sh - 50.0, art_scale, dim, &art_str);
-
-            let start = "-- PRESS SPACE to start --";
-            let start_scale = 0.48;
-            let alpha = 0.55 + 0.45 * (self.elapsed_secs * 1.6).sin();
-            let start_c: Color = [0.55, 0.85, 1.00, alpha];
-            let start_w = start.len() as f32 * 8.0 * start_scale;
-            painter.text(cx - start_w * 0.5, sh - 28.0, start_scale, start_c, start);
+        let mut ly = by + 48.0;
+        for (label, value, color) in &lines {
+            self.tx(painter, bx + 16.0, ly, 13.0, UI_DIM, label);
+            self.tx(painter, bx + 64.0, ly, 13.0, *color, value);
+            ly += 24.0;
         }
     }
+
+    fn kbd(&self, painter: &mut Painter, x: f32, y: f32, key: &str) -> f32 {
+        let px = 12.0;
+        let tw = self.tx_w(painter, px, key);
+        let w = tw + 14.0;
+        ui_card(painter, x, y, w, 22.0, UI_RAISED, UI_LINE, 1.0);
+        self.tx(painter, x + 7.0, y + 4.0, px, UI_GOLD, key);
+        w
+    }
+
+    fn help_rows(&self, painter: &mut Painter, x: f32, mut y: f32, rows: &[(&str, &str)]) {
+        for (key, val) in rows {
+            if key.is_empty() {
+                y += 8.0;
+                self.tx(painter, x, y, 13.0, UI_ACCENT, val);
+                y += 24.0;
+            } else {
+                let kw = self.kbd(painter, x, y, key);
+                self.tx(painter, x + kw + 12.0, y + 3.0, 14.0, UI_INK, val);
+                y += 32.0;
+            }
+        }
+    }
+
+    pub(crate) fn draw_help_overlay(&self, painter: &mut Painter) {
+        let (sw, sh) = screen_px();
+        painter.rect(0.0, 0.0, sw, sh, [0.02, 0.03, 0.05, 0.66]);
+        let bw = 920.0;
+        let bh = 580.0;
+        let bx = (sw - bw) * 0.5;
+        let by = (sh - bh) * 0.5;
+        painter.rect(bx + 6.0, by + 8.0, bw, bh, [0.0, 0.0, 0.0, 0.35]);
+        ui_card(painter, bx, by, bw, bh, UI_PANEL, UI_LINE, 1.0);
+        painter.rect(bx + 1.0, by + 1.0, bw - 2.0, 3.0, UI_ACCENT);
+        self.tx(painter, bx + 28.0, by + 22.0, 26.0, UI_INK, "操作");
+        let cw = self.chip_width(painter, "閉じる", "H");
+        self.chip(
+            painter,
+            bx + bw - 24.0 - cw,
+            by + 22.0,
+            "閉じる",
+            "H",
+            ChipTone::Quiet,
+        );
+
+        let left: &[(&str, &str)] = &[
+            ("", "時間"),
+            ("Space", "停止と再開"),
+            ("1-4", "速度"),
+            ("", "神の手"),
+            ("5", "調べる"),
+            ("6", "陸を上げる"),
+            ("7", "恵みを与える"),
+            ("8", "建国する"),
+            ("クリック", "その場所で使う"),
+            ("", "画面"),
+            ("O", "表示を切り替える"),
+            ("G", "画風を切り替える"),
+            ("+ -", "ズーム"),
+            ("矢印", "地図を動かす"),
+        ];
+        let right: &[(&str, &str)] = &[
+            ("", "立体"),
+            ("Q E", "回転"),
+            ("Z X", "仰角"),
+            ("", "編集"),
+            ("M", "観察と編集"),
+            ("T", "道具を換える"),
+            ("P", "地形の型"),
+            ("R", "別の世界"),
+            ("ホイール", "収容力"),
+            ("", "共有"),
+            ("seed", "同じ世界を開く"),
+            ("scenario", "地形の種類"),
+        ];
+        self.help_rows(painter, bx + 32.0, by + 76.0, left);
+        self.help_rows(painter, bx + 490.0, by + 76.0, right);
+    }
+
+    pub(crate) fn draw_title(&self, painter: &mut Painter) {
+        let (sw, sh) = screen_px();
+        painter.rect(0.0, 0.0, sw, sh, UI_PAGE);
+        let bw = 620.0;
+        let bh = 332.0;
+        let bx = (sw - bw) * 0.5;
+        let by = (sh - bh) * 0.5 - 6.0;
+        painter.rect(bx + 6.0, by + 8.0, bw, bh, [0.0, 0.0, 0.0, 0.28]);
+        ui_card(painter, bx, by, bw, bh, UI_PANEL, UI_LINE, 1.0);
+        painter.rect(bx + 1.0, by + 1.0, bw - 2.0, 3.0, UI_ACCENT);
+
+        let cx = sw * 0.5;
+        self.tx_centered(painter, cx, by + 46.0, 13.0, UI_ACCENT, "手続き生成");
+        self.tx_centered(painter, cx, by + 78.0, 36.0, UI_INK, "大陸シミュレーター");
+        self.tx_centered(
+            painter,
+            cx,
+            by + 136.0,
+            16.0,
+            UI_DIM,
+            "文明が岸に根を下ろし、国になっていく",
+        );
+
+        let btn_w = 220.0;
+        let btn_h = 46.0;
+        let btn_x = cx - btn_w * 0.5;
+        let btn_y = by + 196.0;
+        let pulse = 0.62 + 0.38 * (self.elapsed_secs * 2.0).sin();
+        let border = [UI_ACCENT[0], UI_ACCENT[1], UI_ACCENT[2], pulse];
+        ui_card(painter, btn_x, btn_y, btn_w, btn_h, UI_BLUE_BG, border, 1.5);
+        self.tx_centered(painter, cx, btn_y + 14.0, 16.0, UI_INK, "はじめる");
+        self.tx_centered(
+            painter,
+            cx,
+            btn_y + 64.0,
+            13.0,
+            UI_DIM,
+            "Space または クリック",
+        );
+    }
+
+    pub(crate) fn draw_setup(&self, painter: &mut Painter) {
+        let (sw, sh) = screen_px();
+        painter.rect(0.0, 0.0, sw, sh, UI_PAGE);
+        let cx = sw * 0.5;
+        self.tx_centered(painter, cx, 32.0, 28.0, UI_INK, "世界を選ぶ");
+        self.tx_centered(
+            painter,
+            cx,
+            72.0,
+            14.0,
+            UI_DIM,
+            "1 から 8、または左右。Space ではじめる",
+        );
+
+        let margin = 36.0;
+        let gap = 14.0;
+        let card_w = (sw - margin * 2.0 - gap * 3.0) / 4.0;
+        let card_h = 68.0;
+        let cards_y = 108.0;
+        for (i, scenario) in SCENARIOS.iter().enumerate() {
+            let col = (i % 4) as f32;
+            let row = (i / 4) as f32;
+            let x = margin + col * (card_w + gap);
+            let y = cards_y + row * (card_h + 12.0);
+            let sel = i == self.setup_scenario_idx;
+            let border = if sel { UI_ACCENT } else { UI_LINE };
+            let fill = if sel { UI_BLUE_BG } else { UI_RAISED };
+            ui_card(
+                painter,
+                x,
+                y,
+                card_w,
+                card_h,
+                fill,
+                border,
+                if sel { 2.0 } else { 1.0 },
+            );
+            self.tx(
+                painter,
+                x + 16.0,
+                y + 12.0,
+                12.0,
+                UI_DIM,
+                &format!("{}", i + 1),
+            );
+            let name_px = if sel { 20.0 } else { 18.0 };
+            let name_c = if sel { UI_INK } else { UI_DIM };
+            let name = if self.font.is_some() {
+                scenario.label_jp()
+            } else {
+                scenario.label()
+            };
+            self.tx(painter, x + 16.0, y + 32.0, name_px, name_c, name);
+        }
+
+        let blurb = SCENARIOS[self.setup_scenario_idx].blurb_jp();
+        let blurb_y = 268.0;
+        let blurb_w = sw - margin * 2.0;
+        ui_card(
+            painter, margin, blurb_y, blurb_w, 52.0, UI_RAISED, UI_LINE, 1.0,
+        );
+        self.tx_centered(painter, cx, blurb_y + 16.0, 15.0, UI_INK, blurb);
+
+        let cell = 5.0;
+        let preview_w = COLS as f32 * cell;
+        let preview_h = ROWS as f32 * cell;
+        let frame_w = preview_w + 24.0;
+        let frame_h = preview_h + 24.0;
+        let frame_x = cx - frame_w * 0.5;
+        let frame_y = 340.0;
+        ui_card(
+            painter, frame_x, frame_y, frame_w, frame_h, UI_PAGE, UI_LINE, 1.0,
+        );
+        if self.tiles.len() == COLS * ROWS {
+            let ox = frame_x + 12.0;
+            let oy = frame_y + 12.0;
+            for row in 0..ROWS {
+                for col in 0..COLS {
+                    let c = self.tiles[idx(col, row)].terrain.base_color();
+                    painter.rect(
+                        ox + col as f32 * cell,
+                        oy + row as f32 * cell,
+                        cell,
+                        cell,
+                        c,
+                    );
+                }
+            }
+        }
+
+        let styles = [ArtStyle::Pixel, ArtStyle::Diorama, ArtStyle::Solid3D];
+        let mut widths = [0.0; 3];
+        let mut chips_w = 0.0;
+        for (i, style) in styles.iter().enumerate() {
+            widths[i] = self.chip_width(painter, style.label_jp(), "");
+            chips_w += widths[i];
+        }
+        chips_w += 8.0 * 2.0;
+        let art_label_w = self.tx_w(painter, 13.0, "画風") + 14.0;
+        let mut ax = cx - (art_label_w + chips_w) * 0.5;
+        let art_y = frame_y + frame_h + 18.0;
+        self.tx(painter, ax, art_y + 7.0, 13.0, UI_DIM, "画風");
+        ax += art_label_w;
+        for (i, style) in styles.iter().enumerate() {
+            let tone = if *style == self.art_style {
+                ChipTone::On
+            } else {
+                ChipTone::Quiet
+            };
+            self.chip(painter, ax, art_y, style.label_jp(), "", tone);
+            ax += widths[i] + 8.0;
+        }
+
+        let btn_w = 240.0;
+        let btn_h = 46.0;
+        let btn_x = cx - btn_w * 0.5;
+        let btn_y = (art_y + 44.0).min(sh - 62.0);
+        let pulse = 0.62 + 0.38 * (self.elapsed_secs * 2.0).sin();
+        let border = [UI_ACCENT[0], UI_ACCENT[1], UI_ACCENT[2], pulse];
+        ui_card(painter, btn_x, btn_y, btn_w, btn_h, UI_BLUE_BG, border, 1.5);
+        self.tx_centered(
+            painter,
+            cx,
+            btn_y + 14.0,
+            16.0,
+            UI_INK,
+            "この世界ではじめる",
+        );
+    }
+
 
     // ---- ship positions (render-derived, no sim mutation) ------------------
 
