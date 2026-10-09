@@ -200,7 +200,13 @@ impl Renderer {
             raw.height
         };
 
-        let instance = wgpu::Instance::default();
+        // Probe WebGPU before locking the instance to it. If the browser
+        // exposes navigator.gpu but cannot create an adapter, wgpu would
+        // otherwise refuse the WebGL backend and leave a white canvas.
+        let instance = wgpu::util::new_instance_with_webgpu_detection(
+            wgpu::InstanceDescriptor::new_without_display_handle(),
+        )
+        .await;
         let surface = instance
             .create_surface(window.clone())
             .expect("failed to create surface");

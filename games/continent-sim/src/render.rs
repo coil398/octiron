@@ -1,5 +1,5 @@
 use crate::*;
-use octiron::{CameraUniform, Scene3D, Vertex3D, diorama_view, proj_ortho};
+use octiron::{CameraUniform, Scene3D, Vertex3D, autotile_index_4bit, diorama_view, proj_ortho};
 use glam::Vec3;
 
 // ---- overlay / art-style enums --------------------------------------------
@@ -151,6 +151,89 @@ impl Continent {
                 self.lib_rects.insert(name.to_string(), Rect::new(x, y, w, h));
             }
         }
+
+        self.atlas_clean = Some(assets.load_png(include_bytes!("../assets/clean.png")));
+    }
+
+    fn clean_base_rect(t: Terrain) -> Rect {
+        Rect::new(t.index() as f32 * 32.0, 0.0, 32.0, 32.0)
+    }
+
+    fn clean_blob_rect(sheet_y: f32, mask: u8) -> Rect {
+        let i = autotile_index_4bit(mask);
+        let col = (i % 4) as f32;
+        let row = (i / 4) as f32;
+        Rect::new(col * 32.0, sheet_y + row * 32.0, 32.0, 32.0)
+    }
+
+    /// Ocean tile touching land. Mask bits are water neighbours (blob convention).
+    fn coast_mask(&self, col: usize, row: usize) -> Option<u8> {
+        let t = self.tiles[idx(col, row)].terrain;
+        if t != Terrain::Ocean && t != Terrain::DeepOcean {
+            return None;
+        }
+        const DIRS: [(i32, i32); 4] = [(0, -1), (1, 0), (0, 1), (-1, 0)];
+        let mut mask = 0u8;
+        let mut land = false;
+        for (bit, (dc, dr)) in DIRS.iter().enumerate() {
+            let nc = col as i32 + dc;
+            let nr = row as i32 + dr;
+            if nc < 0 || nr < 0 || nc >= COLS as i32 || nr >= ROWS as i32 {
+                mask |= 1 << bit;
+                continue;
+            }
+            if self.tiles[idx(nc as usize, nr as usize)].terrain.is_water() {
+                mask |= 1 << bit;
+            } else {
+                land = true;
+            }
+        }
+        if land { Some(mask) } else { None }
+    }
+
+    /// River tile. Mask bits are river or sea neighbours so the channel meets the coast.
+    fn river_mask(&self, col: usize, row: usize) -> Option<u8> {
+        if self.tiles[idx(col, row)].terrain != Terrain::River {
+            return None;
+        }
+        const DIRS: [(i32, i32); 4] = [(0, -1), (1, 0), (0, 1), (-1, 0)];
+        let mut mask = 0u8;
+        for (bit, (dc, dr)) in DIRS.iter().enumerate() {
+            let nc = col as i32 + dc;
+            let nr = row as i32 + dr;
+            if nc < 0 || nr < 0 || nc >= COLS as i32 || nr >= ROWS as i32 {
+                continue;
+            }
+            let nt = self.tiles[idx(nc as usize, nr as usize)].terrain;
+            if nt == Terrain::River || nt == Terrain::Ocean || nt == Terrain::DeepOcean {
+                mask |= 1 << bit;
+            }
+        }
+        Some(mask)
+    }
+
+    fn map_sprite(&self, col: usize, row: usize, terrain: Terrain) -> (Option<Texture>, Option<Rect>) {
+        match self.art_style {
+            ArtStyle::Diorama | ArtStyle::Solid3D => {
+                (self.atlas_diorama, self.terrain_src_diorama[terrain.index()])
+            }
+            ArtStyle::Pixel => {
+                if let Some(vr) = self.variant_rect(col, row) {
+                    return (self.atlas_lib, Some(vr));
+                }
+                if let Some(atlas) = self.atlas_clean {
+                    let src = if let Some(mask) = self.coast_mask(col, row) {
+                        Self::clean_blob_rect(32.0, mask)
+                    } else if let Some(mask) = self.river_mask(col, row) {
+                        Self::clean_blob_rect(160.0, mask)
+                    } else {
+                        Self::clean_base_rect(terrain)
+                    };
+                    return (Some(atlas), Some(src));
+                }
+                (self.atlas, self.terrain_src[terrain.index()])
+            }
+        }
     }
 
     // ---- coordinate helpers ------------------------------------------------
@@ -207,26 +290,6 @@ impl Continent {
                 _ => {}
             }
         }
-        if t == Terrain::River {
-            const ORTHO: [(i32, i32); 4] = [(0, -1), (0, 1), (-1, 0), (1, 0)];
-            let mut river_dirs: Vec<usize> = Vec::new();
-            for (d, &(dc, dr)) in ORTHO.iter().enumerate() {
-                let nc = col as i32 + dc;
-                let nr = row as i32 + dr;
-                if nc < 0 || nr < 0 || nc >= COLS as i32 || nr >= ROWS as i32 {
-                    continue;
-                }
-                if self.tiles[idx(nc as usize, nr as usize)].terrain == Terrain::River {
-                    river_dirs.push(d);
-                }
-            }
-            let is_straight = river_dirs == [0, 1] || river_dirs == [2, 3];
-            if river_dirs.len() >= 2 && !is_straight {
-                if let Some(&r) = self.lib_rects.get("river-bend") {
-                    return Some(r);
-                }
-            }
-        }
         if t == Terrain::Plains {
             let i2 = idx(col, row);
             let occ = self.occupied[i2];
@@ -240,18 +303,6 @@ impl Continent {
         if t == Terrain::Mountain && cold {
             if let Some(r) = self.lib_rects.get("mountain-snowcapped") {
                 return Some(*r);
-            }
-        }
-        if t == Terrain::Ocean {
-            for &(dc, dr) in NEIGHBORS8.iter() {
-                let nc = col as i32 + dc;
-                let nr = row as i32 + dr;
-                if nc < 0 || nr < 0 || nc >= COLS as i32 || nr >= ROWS as i32 {
-                    continue;
-                }
-                if !self.tiles[idx(nc as usize, nr as usize)].terrain.is_water() {
-                    return self.lib_rects.get("coast-edge").copied();
-                }
             }
         }
         None
@@ -406,16 +457,17 @@ impl Continent {
                 let tile = self.tiles[i];
 
                 let dim = self.overlay != Overlay::Terrain && self.overlay != Overlay::Resource;
-                let tint: Color = if dim { [0.5, 0.5, 0.5, 1.0] } else { [1.0, 1.0, 1.0, 1.0] };
-                let (atlas, src) = match self.art_style {
-                    ArtStyle::Diorama | ArtStyle::Solid3D => {
-                        (self.atlas_diorama, self.terrain_src_diorama[tile.terrain.index()])
-                    }
-                    ArtStyle::Pixel => match self.variant_rect(col, row) {
-                        Some(vr) => (self.atlas_lib, Some(vr)),
-                        None => (self.atlas, self.terrain_src[tile.terrain.index()]),
-                    },
+                let shade = if self.art_style == ArtStyle::Pixel {
+                    0.86 + 0.22 * tile.elevation.clamp(0.0, 1.0)
+                } else {
+                    1.0
                 };
+                let tint: Color = if dim {
+                    [0.5 * shade, 0.5 * shade, 0.5 * shade, 1.0]
+                } else {
+                    [shade, shade, shade, 1.0]
+                };
+                let (atlas, src) = self.map_sprite(col, row, tile.terrain);
                 match (atlas, src) {
                     (Some(atlas), Some(src)) => {
                         painter.sprite_region(atlas, Rect::new(x, y, size, size), src, tint);
@@ -490,29 +542,29 @@ impl Continent {
             }
         }
 
-        // §2 nations: tint each occupied tile with the nation's color.
+        // Nation territory is a thin border so the terrain art stays visible.
         if self.overlay != Overlay::Carrying && self.overlay != Overlay::Resource {
             for nation in &self.nations {
+                let border = [nation.color[0], nation.color[1], nation.color[2], 0.95];
                 for &si in &nation.territory {
+                    if si >= self.settlements.len() {
+                        continue;
+                    }
                     let tile_idx = self.settlements[si].tile;
                     let r = self.view_tile_rect(tile_idx);
                     if r.x + r.w <= MAP_X || r.x >= map_right || r.y + r.h <= MAP_Y || r.y >= map_bottom {
                         continue;
                     }
-                    painter.rect(r.x, r.y, r.w, r.h, nation.color);
-                }
-                let cr = self.view_tile_rect(nation.capital);
-                if cr.x + cr.w > MAP_X && cr.x < map_right && cr.y + cr.h > MAP_Y && cr.y < map_bottom {
-                    painter.rect(
-                        cr.x + 1.0,
-                        cr.y + 1.0,
-                        cr.w - 2.0,
-                        cr.h - 2.0,
-                        [1.0, 1.0, 1.0, 0.55],
-                    );
+                    let b = 2.0;
+                    painter.rect(r.x, r.y, r.w, b, border);
+                    painter.rect(r.x, r.y + r.h - b, r.w, b, border);
+                    painter.rect(r.x, r.y, b, r.h, border);
+                    painter.rect(r.x + r.w - b, r.y, b, r.h, border);
                 }
             }
         }
+
+        self.draw_wildlife(painter, pan, zoom, map_right, map_bottom);
 
         // ---- farmland overlay (drawn AFTER base tiles, BEFORE roads/markers) ----
         // For each Plains tile near a settlement (Chebyshev 1..=2), draw a
@@ -639,19 +691,21 @@ impl Continent {
                 if tx + tsize <= MAP_X || tx >= map_right || ty + tsize <= MAP_Y || ty >= map_bottom {
                     continue;
                 }
-                let k = self.tiles[s.tile].k.max(1.0);
-                let frac = (s.pop / k).clamp(0.15, 1.0);
-                let cx = tx + tsize * 0.5;
-                let cy = ty + tsize * 0.5;
-                if s.city {
-                    let marker = tsize * (0.55 + 0.50 * frac);
-                    painter.rect(cx - marker * 0.5 - 1.0, cy - marker * 0.5 - 1.0, marker + 2.0, marker + 2.0, [1.0, 1.0, 1.0, 0.80]);
-                    let city_color = lerp_color([0.30, 0.85, 0.90, 1.0], [0.10, 0.50, 0.80, 1.0], frac);
-                    painter.rect(cx - marker * 0.5, cy - marker * 0.5, marker, marker, city_color);
+                let name = if s.city {
+                    "char-monarch"
+                } else if s.pop > 200.0 {
+                    "char-priest"
+                } else if s.tech & TECH_SEAFARING != 0 {
+                    "char-merchant"
                 } else {
-                    let marker = tsize * (0.40 + 0.55 * frac);
-                    let color = lerp_color([1.0, 0.92, 0.55, 1.0], [0.95, 0.35, 0.18, 1.0], frac);
-                    painter.rect(cx - marker * 0.5, cy - marker * 0.5, marker, marker, color);
+                    "char-nomad"
+                };
+                let m = tsize * 0.88;
+                let dst = Rect::new(tx + (tsize - m) * 0.5, ty + (tsize - m) * 0.5, m, m);
+                if let (Some(lib), Some(&src)) = (self.atlas_lib, self.lib_rects.get(name)) {
+                    painter.sprite_region(lib, dst, src, [1.0, 1.0, 1.0, 1.0]);
+                } else {
+                    painter.rect(dst.x, dst.y, dst.w, dst.h, [0.95, 0.85, 0.45, 1.0]);
                 }
             }
         }
@@ -707,14 +761,64 @@ impl Continent {
             }
         }
 
-        // §6 map editor: hovered tile highlight.
-        if self.edit_mode == EditMode::Edit {
+        // Hover highlight while editing, or while a god tool other than inspect is armed.
+        if self.edit_mode == EditMode::Edit || self.god_tool != GodTool::Inspect {
             if let Some(hi) = self.hovered_tile {
                 let r = self.view_tile_rect(hi);
                 painter.rect(r.x, r.y, r.w, 1.5, [1.0, 1.0, 0.6, 0.90]);
                 painter.rect(r.x, r.y + r.h - 1.5, r.w, 1.5, [1.0, 1.0, 0.6, 0.90]);
                 painter.rect(r.x, r.y, 1.5, r.h, [1.0, 1.0, 0.6, 0.90]);
                 painter.rect(r.x + r.w - 1.5, r.y, 1.5, r.h, [1.0, 1.0, 0.6, 0.90]);
+            }
+        }
+    }
+
+    fn draw_wildlife(&self, painter: &mut Painter, pan: Vec2, zoom: f32, map_right: f32, map_bottom: f32) {
+        let Some(lib) = self.atlas_lib else { return };
+        for row in 0..ROWS {
+            for col in 0..COLS {
+                let i = idx(col, row);
+                if i % 23 != 0 || self.occupied[i] >= 0 {
+                    continue;
+                }
+                let t = self.tiles[i].terrain;
+                let name = match t {
+                    Terrain::Forest => if i % 46 == 0 { "animal-deer" } else { "animal-boar" },
+                    Terrain::Plains => {
+                        if i < self.resources.len() && self.resources[i] == Resource::Horses {
+                            "animal-horse"
+                        } else if i % 46 == 0 {
+                            "animal-cattle"
+                        } else {
+                            continue;
+                        }
+                    }
+                    Terrain::Desert => "animal-wolf",
+                    Terrain::Ocean | Terrain::DeepOcean => {
+                        let coastal = NEIGHBORS8.iter().any(|&(dc, dr)| {
+                            let nc = col as i32 + dc;
+                            let nr = row as i32 + dr;
+                            if nc < 0 || nr < 0 || nc >= COLS as i32 || nr >= ROWS as i32 {
+                                return false;
+                            }
+                            !self.tiles[idx(nc as usize, nr as usize)].terrain.is_water()
+                        });
+                        if coastal { "animal-fish" } else { continue }
+                    }
+                    _ => continue,
+                };
+                let Some(&src) = self.lib_rects.get(name) else { continue };
+                let (x, y, size) = view_tile(col, row, pan, zoom);
+                if x + size <= MAP_X || x >= map_right || y + size <= MAP_Y || y >= map_bottom {
+                    continue;
+                }
+                let m = size * 0.72;
+                painter.sprite_region(
+                    lib,
+                    Rect::new(x + (size - m) * 0.5, y + (size - m) * 0.5, m, m),
+                    src,
+                    [1.0, 1.0, 1.0, 1.0],
+                );
             }
         }
     }
@@ -902,6 +1006,17 @@ impl Continent {
         }
 
         painter.rect(PANEL_X + 8.0, y, PANEL_W - 16.0, 1.0, [0.30, 0.33, 0.40, 1.0]);
+        y += 6.0;
+        let goal = self.goal_line();
+        if let Some(font) = self.font.as_ref() {
+            painter.text_font(x, y, 0.40 * FONT_GLYPH_H, dim, font, "目標");
+            painter.text_font(x + 72.0, y, 0.40 * FONT_GLYPH_H, accent, font, &goal);
+        } else {
+            painter.text(x, y, 0.40, dim, "GOAL");
+            painter.text(x + 72.0, y, 0.40, accent, &goal);
+        }
+        y += 18.0;
+        painter.rect(PANEL_X + 8.0, y, PANEL_W - 16.0, 1.0, [0.30, 0.33, 0.40, 1.0]);
         y += 8.0;
         if let Some(font) = self.font.as_ref() {
             painter.text_font(x, y, 0.42 * FONT_GLYPH_H, accent, font, "年代記");
@@ -920,52 +1035,55 @@ impl Continent {
     }
 
     pub(crate) fn draw_status(&self, painter: &mut Painter) {
-        let y = MAP_Y + MAP_H + 8.0;
-        let base_hint = "[Space]停止 [1-4]速度 [O]表示 [P]地形 [G]画風 [R]新規 [click]調査";
-        let edit_hint = "  [M]モード [T]ツール [LMB]使用 [Scroll]K+/-";
-        let cam_hint = if self.art_style == ArtStyle::Solid3D {
-            "  [Q/E]方位 [Z/X]仰角"
+        let y = MAP_Y + MAP_H + 6.0;
+        let dim = [0.55, 0.60, 0.70, 1.0];
+        let cam = if self.art_style == ArtStyle::Solid3D {
+            "  [Q/E]回転 [Z/X]仰角"
         } else {
             ""
         };
-
-        // Time-of-day label shown only in Solid3D mode.
-        let tod_hint = if self.art_style == ArtStyle::Solid3D {
-            const DAY_CYCLE_SECS: f32 = 120.0;
-            let phase = (self.elapsed_secs / DAY_CYCLE_SECS).fract();
-            let label = if phase < 0.125 || phase >= 0.875 {
-                "正午"
-            } else if phase < 0.375 {
-                "夕刻"
-            } else if phase < 0.625 {
-                "深夜"
-            } else {
-                "夜明"
-            };
-            format!("  [{}]", label)
-        } else {
-            String::new()
-        };
-
-        let help_hint = if self.show_help { "" } else { "  [H]ヘルプ" };
-
+        let line1 = format!(
+            "[Space]停止  [1-4]速度  [5]調べ [6]上げ [7]恵 [8]建国  [O]表示 [G]画風 [H]ヘルプ{}",
+            cam
+        );
+        let line2 = format!(
+            "信仰 {:.0}  道具:{}  目標:{}  {} / {}  SEED {}",
+            self.faith,
+            self.god_tool.label_jp(),
+            self.goal_line(),
+            self.scenario.label_jp(),
+            self.art_style.label_jp(),
+            self.seed
+        );
         if let Some(font) = self.font.as_ref() {
-            painter.text_font(
-                MAP_X,
-                y,
-                0.40 * FONT_GLYPH_H,
-                [0.55, 0.60, 0.70, 1.0],
-                font,
-                &format!("{}{}{}{}{}  地形:{} 画風:{}  SEED {}", base_hint, edit_hint, cam_hint, tod_hint, help_hint, self.scenario.label_jp(), self.art_style.label_jp(), self.seed),
-            );
+            painter.text_font(MAP_X, y, 0.36 * FONT_GLYPH_H, dim, font, &line1);
+            painter.text_font(MAP_X, y + 16.0, 0.36 * FONT_GLYPH_H, dim, font, &line2);
         } else {
-            painter.text(
-                MAP_X,
-                y,
-                0.40,
-                [0.55, 0.60, 0.70, 1.0],
-                &format!("{}{}{}{}{}  preset:{} art:{}  SEED {}", base_hint, edit_hint, cam_hint, tod_hint, help_hint, self.scenario.label(), self.art_style.label(), self.seed),
-            );
+            painter.text(MAP_X, y, 0.36, dim, &line1);
+            painter.text(MAP_X, y + 16.0, 0.36, dim, &line2);
+        }
+    }
+
+    /// Win or loss banner. The sim pauses when the flag first flips.
+    pub(crate) fn draw_outcome(&self, painter: &mut Painter) {
+        let (text, color): (&str, Color) = if self.extinction_logged {
+            ("人々は滅びた", [0.95, 0.40, 0.28, 1.0])
+        } else if self.unification_logged {
+            ("大陸は統一された", [1.0, 0.90, 0.40, 1.0])
+        } else {
+            return;
+        };
+        let bw = 360.0;
+        let bh = 44.0;
+        let bx = MAP_X + (MAP_W - bw) * 0.5;
+        let by = MAP_Y + 18.0;
+        painter.rect(bx, by, bw, bh, [0.05, 0.06, 0.10, 0.88]);
+        if let Some(font) = self.font.as_ref() {
+            let px = 0.62 * FONT_GLYPH_H;
+            let w = painter.text_font_width(px, font, text);
+            painter.text_font(bx + (bw - w) * 0.5, by + 8.0, px, color, font, text);
+        } else {
+            painter.text(bx + 24.0, by + 10.0, 0.55, color, text);
         }
     }
 
@@ -1113,7 +1231,8 @@ impl Continent {
             ("-- 表示 --",           ""),
             ("O",                    "重ね表示 (地形/収容力/人口/国家/技術/資源)"),
             ("G",                    "画風 (ピクセル / ジオラマ / 3D)"),
-            ("click",                "タイル調査"),
+            ("5 / 6 / 7 / 8",        "調べる / 上げる / 恵み / 建国"),
+            ("click",                "選んだ神の手を使う"),
             ("+  /  -",              "ズームイン / アウト"),
             ("矢印キー",             "マップ移動"),
             ("",                     ""),
@@ -1138,7 +1257,8 @@ impl Continent {
             // SHARE
             ("-- 共有 --",           ""),
             ("?seed=N",              "URL: このワールドを再現"),
-            ("?scenario=NAME",       "standard/pangaea/archipelago/highlands/arid/iceage/volcanic/lush"),
+            ("?scenario=",           "標準・パンゲア・群島・高地"),
+            (" ",                    "乾燥・氷河期・火山帯・豊穣"),
             ("",                     ""),
             ("H",                    "このヘルプを閉じる"),
         ];
@@ -1190,7 +1310,7 @@ impl Continent {
     pub(crate) fn draw_title(&self, painter: &mut Painter) {
         use crate::{MAP_Y, MAP_H, PANEL_W, MARGIN, PANEL_X};
         let sw = PANEL_X + PANEL_W + MARGIN;
-        let sh = MAP_Y + MAP_H + 30.0;
+        let sh = MAP_Y + MAP_H + 48.0;
 
         // Background.
         painter.rect(0.0, 0.0, sw, sh, [0.04, 0.05, 0.10, 1.0]);
@@ -1261,7 +1381,7 @@ impl Continent {
     pub(crate) fn draw_setup(&self, painter: &mut Painter) {
         use crate::{MAP_Y, MAP_H, PANEL_W, MARGIN, PANEL_X, SCENARIOS};
         let sw = PANEL_X + PANEL_W + MARGIN;
-        let sh = MAP_Y + MAP_H + 30.0;
+        let sh = MAP_Y + MAP_H + 48.0;
 
         // Background.
         painter.rect(0.0, 0.0, sw, sh, [0.04, 0.05, 0.10, 1.0]);
@@ -1313,6 +1433,23 @@ impl Continent {
                 // Selection arrow.
                 if is_sel {
                     painter.text_font(col_x - 18.0, y, px, sel_c, font, "▶");
+                }
+            }
+
+            // Blurb and a small terrain preview of the world generate() already built.
+            let blurb = SCENARIOS[self.setup_scenario_idx].blurb_jp();
+            let blurb_px = 0.38 * FONT_GLYPH_H;
+            let blurb_w = painter.text_font_width(blurb_px, font, blurb);
+            painter.text_font(cx - blurb_w * 0.5, 290.0, blurb_px, ink, font, blurb);
+            if !self.tiles.is_empty() {
+                let cell = 3.2;
+                let ox = cx - COLS as f32 * cell * 0.5;
+                let oy = 320.0;
+                for row in 0..ROWS {
+                    for col in 0..COLS {
+                        let c = self.tiles[idx(col, row)].terrain.base_color();
+                        painter.rect(ox + col as f32 * cell, oy + row as f32 * cell, cell, cell, c);
+                    }
                 }
             }
 
@@ -1466,6 +1603,18 @@ impl Continent {
 
     // ---- 3D scene builder --------------------------------------------------
 
+    /// Top of a land neighbour. Water and the map edge stay open so coasts read as cliffs.
+    fn neighbor_land_top(&self, col: i32, row: i32, height_scale: f32) -> Option<f32> {
+        if col < 0 || row < 0 || col >= COLS as i32 || row >= ROWS as i32 {
+            return None;
+        }
+        let t = self.tiles[idx(col as usize, row as usize)].terrain;
+        if t.is_water() {
+            return None;
+        }
+        Some(Self::terrain_elevation_3d(t) * height_scale)
+    }
+
     /// Returns the elevation (world-Y top of block) for the given terrain type.
     fn terrain_elevation_3d(t: Terrain) -> f32 {
         match t {
@@ -1568,8 +1717,8 @@ impl Continent {
                 if nid >= 0 {
                     if let Some(&ni) = nation_map.get(&nid) {
                         let nc = self.nations[ni].color;
-                        // nc is already [r,g,b,a=0.5]; blend over.
-                        color = lerp_color(color, [nc[0], nc[1], nc[2], 1.0], nc[3]);
+                        // A light tint so territory reads without painting over the land.
+                        color = lerp_color(color, [nc[0], nc[1], nc[2], 1.0], 0.18);
                     }
                 }
             }
@@ -1607,31 +1756,8 @@ impl Continent {
     ///
     /// Returns `(vertices, indices)`.
     fn build_static_mesh(&self) -> (Vec<Vertex3D>, Vec<u32>) {
-        let height_scale = 4.0_f32;
+        let height_scale = 1.7_f32;
         let tile_w = 1.0_f32;
-
-        const ATLAS_W: f32 = 454.0;
-        const ATLAS_H: f32 = 129.0;
-        #[inline(always)]
-        fn terrain_uv(px: f32, py: f32, pw: f32, ph: f32) -> [f32; 4] {
-            [
-                (px + 0.5) / ATLAS_W,
-                (py + 0.5) / ATLAS_H,
-                (px + pw - 0.5) / ATLAS_W,
-                (py + ph - 0.5) / ATLAS_H,
-            ]
-        }
-        let terrain_uv_rects: [[f32; 4]; TERRAIN_COUNT] = [
-            terrain_uv(  0.0,  0.0, 64.0, 64.0), // 0 DeepOcean
-            terrain_uv(325.0,  0.0, 64.0, 64.0), // 1 Ocean
-            terrain_uv(  0.0, 65.0, 64.0, 64.0), // 2 River
-            terrain_uv(390.0,  0.0, 64.0, 64.0), // 3 Plains
-            terrain_uv(130.0,  0.0, 64.0, 64.0), // 4 Forest
-            terrain_uv(195.0,  0.0, 64.0, 64.0), // 5 Hills
-            terrain_uv(260.0,  0.0, 64.0, 64.0), // 6 Mountain
-            terrain_uv( 65.0,  0.0, 64.0, 64.0), // 7 Desert
-            terrain_uv( 65.0, 65.0, 64.0, 64.0), // 8 Tundra
-        ];
 
         const TREES_PER_TILE: usize = 2;
         const MAX_TREE_TOTAL: usize = 400;
@@ -1719,17 +1845,6 @@ impl Continent {
                     ]),
                 ];
 
-                let tidx = tile.terrain.index();
-                let [u0, v0_uv, u1, v1_uv] = terrain_uv_rects[tidx];
-                let uc = (u0 + u1) * 0.5;
-                let vc = (v0_uv + v1_uv) * 0.5;
-                let top_uvs: [[f32; 2]; 4] = [
-                    [u0, v1_uv],
-                    [u1, v1_uv],
-                    [u1, v0_uv],
-                    [u0, v0_uv],
-                ];
-
                 // Hoist farmland_stage(i) so it is computed only once per tile.
                 let farmland = self.farmland_stage(i);
                 let farmland_top_color: Option<Color> = farmland.map(|stage| {
@@ -1738,19 +1853,34 @@ impl Continent {
                 });
 
                 for (face_idx, (normal, corners)) in faces.iter().enumerate() {
+                    // Drop the bottom and any side a taller-or-equal land neighbour already covers.
+                    let hidden = match face_idx {
+                        3 => true,
+                        0 => self.neighbor_land_top(col as i32 + 1, row as i32, height_scale)
+                            .is_some_and(|ny| ny + 0.001 >= top_y),
+                        1 => self.neighbor_land_top(col as i32 - 1, row as i32, height_scale)
+                            .is_some_and(|ny| ny + 0.001 >= top_y),
+                        4 => self.neighbor_land_top(col as i32, row as i32 + 1, height_scale)
+                            .is_some_and(|ny| ny + 0.001 >= top_y),
+                        5 => self.neighbor_land_top(col as i32, row as i32 - 1, height_scale)
+                            .is_some_and(|ny| ny + 0.001 >= top_y),
+                        _ => false,
+                    };
+                    if hidden {
+                        continue;
+                    }
                     let bv = verts.len() as u32;
                     let face_color = if face_idx == 2 {
                         farmland_top_color.unwrap_or(color)
                     } else {
                         color
                     };
-                    for (vi, pos) in corners.iter().enumerate() {
-                        let uv = if face_idx == 2 { top_uvs[vi] } else { [uc, vc] };
+                    for pos in corners.iter() {
                         verts.push(Vertex3D {
                             position: *pos,
                             normal: normal.to_array(),
                             color: face_color,
-                            uv,
+                            uv: [-1.0, -1.0],
                         });
                     }
                     idxs.extend_from_slice(&[bv, bv+1, bv+2, bv, bv+2, bv+3]);
@@ -2037,31 +2167,8 @@ impl Continent {
     /// indices emitted here correctly reference vertices appended after the static
     /// block.
     fn build_dynamic_mesh(&self, base_v: u32) -> (Vec<Vertex3D>, Vec<u32>) {
-        let height_scale = 4.0_f32;
+        let height_scale = 1.7_f32;
         let tile_w = 1.0_f32;
-
-        const ATLAS_W: f32 = 454.0;
-        const ATLAS_H: f32 = 129.0;
-        #[inline(always)]
-        fn terrain_uv(px: f32, py: f32, pw: f32, ph: f32) -> [f32; 4] {
-            [
-                (px + 0.5) / ATLAS_W,
-                (py + 0.5) / ATLAS_H,
-                (px + pw - 0.5) / ATLAS_W,
-                (py + ph - 0.5) / ATLAS_H,
-            ]
-        }
-        let terrain_uv_rects: [[f32; 4]; TERRAIN_COUNT] = [
-            terrain_uv(  0.0,  0.0, 64.0, 64.0), // 0 DeepOcean
-            terrain_uv(325.0,  0.0, 64.0, 64.0), // 1 Ocean
-            terrain_uv(  0.0, 65.0, 64.0, 64.0), // 2 River
-            terrain_uv(390.0,  0.0, 64.0, 64.0), // 3 Plains
-            terrain_uv(130.0,  0.0, 64.0, 64.0), // 4 Forest
-            terrain_uv(195.0,  0.0, 64.0, 64.0), // 5 Hills
-            terrain_uv(260.0,  0.0, 64.0, 64.0), // 6 Mountain
-            terrain_uv( 65.0,  0.0, 64.0, 64.0), // 7 Desert
-            terrain_uv( 65.0, 65.0, 64.0, 64.0), // 8 Tundra
-        ];
 
         // nation_map needed for tile_color_3d (nation tint on water is rare but
         // must be correct to match the old full-rebuild path).
@@ -2146,24 +2253,38 @@ impl Continent {
                     }
                 }
 
-                let tidx = tile.terrain.index();
-                let [u0, v0_uv, u1, v1_uv] = terrain_uv_rects[tidx];
-                let uc = (u0 + u1) * 0.5;
-                let vc = (v0_uv + v1_uv) * 0.5;
-                let top_uvs: [[f32; 2]; 4] = [
-                    [u0, v1_uv], [u1, v1_uv], [u1, v0_uv], [u0, v0_uv],
-                ];
-
                 for (face_idx, (normal, corners)) in faces.iter().enumerate() {
+                    // Water is a sheet: keep the top, and only the sides that meet land.
+                    if face_idx == 3 {
+                        continue;
+                    }
+                    if face_idx != 2 {
+                        let (dc, dr) = match face_idx {
+                            0 => (1, 0),
+                            1 => (-1, 0),
+                            4 => (0, 1),
+                            5 => (0, -1),
+                            _ => (0, 0),
+                        };
+                        let nc = col as i32 + dc;
+                        let nr = row as i32 + dr;
+                        let meets_land = nc >= 0
+                            && nr >= 0
+                            && nc < COLS as i32
+                            && nr < ROWS as i32
+                            && !self.tiles[idx(nc as usize, nr as usize)].terrain.is_water();
+                        if !meets_land {
+                            continue;
+                        }
+                    }
                     // Index base = static vertex count + already-emitted dynamic verts.
                     let bv = base_v + verts.len() as u32;
-                    for (vi, pos) in corners.iter().enumerate() {
-                        let uv = if face_idx == 2 { top_uvs[vi] } else { [uc, vc] };
+                    for pos in corners.iter() {
                         verts.push(Vertex3D {
                             position: *pos,
                             normal: normal.to_array(),
                             color,
-                            uv,
+                            uv: [-1.0, -1.0],
                         });
                     }
                     idxs.extend_from_slice(&[bv, bv+1, bv+2, bv, bv+2, bv+3]);

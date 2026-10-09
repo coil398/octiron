@@ -9,6 +9,26 @@ pub(crate) enum EditMode {
     Edit,
 }
 
+/// What a click does during play, before the hidden edit mode.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum GodTool {
+    Inspect,
+    Raise,
+    Grace,
+    Found,
+}
+
+impl GodTool {
+    pub(crate) fn label_jp(self) -> &'static str {
+        match self {
+            GodTool::Inspect => "調べる",
+            GodTool::Raise => "上げる",
+            GodTool::Grace => "恵み",
+            GodTool::Found => "建国",
+        }
+    }
+}
+
 /// What the brush currently does in Edit mode.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum EditTool {
@@ -68,9 +88,9 @@ impl Continent {
         }
         let year = self.year;
         self.log_event(format!(
-            "Y{} divine will reshapes a tile to {}",
+            "Y{} 神意が大地を{}にする",
             year,
-            new_terrain.tile_name()
+            new_terrain.tile_name_jp()
         ));
     }
 
@@ -117,7 +137,7 @@ impl Continent {
         let pop = self.settlements[si].pop;
         self.settlements[si].pop = (pop * 1.20).min(k);
         let year = self.year;
-        self.log_event(format!("Y{} divine grace blesses a settlement", year));
+        self.log_event(format!("Y{} 神の恵みが集落を祝福する", year));
     }
 
     /// Grants divine inspiration to the settlement on tile `i` (§6 Inspire).
@@ -135,7 +155,7 @@ impl Continent {
         let si = si as usize;
         self.settlements[si].inspired_years = 10;
         let year = self.year;
-        self.log_event(format!("Y{} divine inspiration stirs a people", year));
+        self.log_event(format!("Y{} 神の鼓舞が民を奮い立たせる", year));
     }
 
     /// Plants a new people on an unoccupied habitable tile (§6 Found).
@@ -169,7 +189,52 @@ impl Continent {
         // Extend nation_of so the new settlement has no nation yet (-1).
         self.nation_of.push(-1);
         let year = self.year;
-        self.log_event(format!("Y{} divine will plants a new people", year));
+        self.log_event(format!("Y{} 神意が新たな民を植える", year));
+    }
+
+    /// Shapes the continent from the start: sea becomes plains, a mountain
+    /// becomes hills, and other land gains carrying capacity.
+    pub(crate) fn god_raise(&mut self, i: usize) {
+        if i >= self.tiles.len() || self.faith < FAITH_COST_PAINT {
+            return;
+        }
+        let year = self.year;
+        let t = self.tiles[i].terrain;
+        if t.is_water() {
+            self.faith -= FAITH_COST_PAINT;
+            self.tiles[i].terrain = Terrain::Plains;
+            self.tiles[i].elevation = self.tiles[i].elevation.max(0.48);
+            let nbrs = self.neighbours(i);
+            self.recompute_tile_k(i);
+            for ni in nbrs {
+                self.recompute_tile_k(ni);
+            }
+            self.log_event(format!("Y{} 神は海を陸に上げた", year));
+        } else if t == Terrain::Mountain {
+            self.faith -= FAITH_COST_PAINT;
+            self.tiles[i].terrain = Terrain::Hills;
+            let nbrs = self.neighbours(i);
+            self.recompute_tile_k(i);
+            for ni in nbrs {
+                self.recompute_tile_k(ni);
+            }
+            self.log_event(format!("Y{} 神は山を丘陵にした", year));
+        } else {
+            self.faith -= FAITH_COST_PAINT;
+            let delta = ELEVATION_K_DELTA * K_MAX;
+            let old_k = self.tiles[i].k;
+            let new_k = (old_k + delta).clamp(0.0, K_MAX * 1.4);
+            let was_hab = self.tiles[i].habitable;
+            let now_hab = !t.is_water() && t != Terrain::Mountain && new_k >= MIN_HABITABLE;
+            self.tiles[i].k = new_k;
+            self.tiles[i].habitable = now_hab;
+            match (was_hab, now_hab) {
+                (false, true) => self.habitable_count += 1,
+                (true, false) => self.habitable_count = self.habitable_count.saturating_sub(1),
+                _ => {}
+            }
+            self.log_event(format!("Y{} 神は大地の実りを増やした", year));
+        }
     }
 
     /// Regen faith by FAITH_REGEN per simulated year.
@@ -215,9 +280,6 @@ impl Continent {
         let hud_h = 20.0;
 
         if self.edit_mode == EditMode::Observe {
-            // Subtle label only.
-            self.pt(painter, MAP_X, hud_y + 4.0, 0.36, [0.40, 0.45, 0.55, 1.0],
-                "[M] 観察モード  -- M で編集モードへ");
             return;
         }
 

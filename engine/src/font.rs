@@ -146,9 +146,24 @@ impl GlyphAtlas {
         let glyph_id = sf.glyph_id(ch);
         let advance = sf.h_advance(glyph_id);
 
-        // Rasterize the glyph outline.
+        // Rasterize the glyph outline. Space and other empty glyphs have an
+        // advance but no outline; keep the advance so the pen still moves.
         let glyph = glyph_id.with_scale_and_position(scale, ab_glyph::point(0.0, 0.0));
-        let outlined = font.outline_glyph(glyph)?;
+        let outlined = match font.outline_glyph(glyph) {
+            Some(o) => o,
+            None => {
+                let cached = CachedGlyph {
+                    uv: GlyphUv { u0: 0.0, v0: 0.0, u1: 0.0, v1: 0.0 },
+                    px_w: 0.0,
+                    px_h: 0.0,
+                    left: 0.0,
+                    ascent: 0.0,
+                    advance,
+                };
+                self.cache.insert((ch, size_bits), cached);
+                return Some(cached);
+            }
+        };
         let bounds = outlined.px_bounds();
 
         let bw = bounds.width().ceil() as u32;
@@ -270,5 +285,20 @@ impl Font {
         let ab = FontVec::try_from_vec(data.to_vec())
             .expect("ab_glyph: failed to parse font bytes");
         Font { ab }
+    }
+
+    /// Sum of glyph advances for `text` at `px_size`, including spaces.
+    ///
+    /// Uses a private atlas so tests can measure width without a frame.
+    pub fn advances_sum(&self, text: &str, px_size: f32) -> f32 {
+        let mut atlas = GlyphAtlas::new();
+        text.chars()
+            .map(|ch| {
+                atlas
+                    .get_or_insert(&self.ab, ch, px_size)
+                    .map(|g| g.advance)
+                    .unwrap_or(px_size * 0.33)
+            })
+            .sum()
     }
 }

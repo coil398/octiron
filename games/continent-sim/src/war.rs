@@ -187,7 +187,7 @@ impl Continent {
                     let name_a = self.nations[*na_idx].name.clone();
                     let name_b = self.nations[*nb_idx].name.clone();
                     log_msgs.push(format!(
-                        "Y{} an alliance keeps the peace between {} and {}",
+                        "Y{} {}と{}の同盟が和平を保つ",
                         year, name_a, name_b
                     ));
                     self.alliance_count += 1;
@@ -223,7 +223,7 @@ impl Continent {
                     let name_b = self.nations[*nb_idx].name.clone();
                     wars.push(War { a: id_a, b: id_b, fronts, years: 0 });
                     log_msgs.push(format!(
-                        "Y{} war breaks out between {} and {}",
+                        "Y{} {}と{}が開戦する",
                         year, name_a, name_b
                     ));
                 }
@@ -337,7 +337,7 @@ impl Continent {
                         attacker_si: si_at_front,
                         new_nation_id: atk_nation_id,
                         log_msg: Some(format!(
-                            "Y{} {} seizes a border town from {}",
+                            "Y{} {}が{}の辺境を奪う",
                             year, atk_name, def_name
                         )),
                         log_repel_msg: None,
@@ -349,7 +349,7 @@ impl Continent {
                         new_nation_id: def_nation_id, // no transfer
                         log_msg: None,
                         log_repel_msg: Some(format!(
-                            "Y{} the terrain holds; {} repels the assault",
+                            "Y{} 地形が守り、{}が撃退する",
                             year, def_name
                         )),
                     });
@@ -417,11 +417,11 @@ impl Continent {
                         let atk_id = if w.a == col_id { w.b } else { w.a };
                         self.nation_idx_by_id(atk_id)
                             .map(|ni| self.nations[ni].name.clone())
-                            .unwrap_or_else(|| "an enemy".to_string())
+                            .unwrap_or_else(|| "敵".to_string())
                     })
-                    .unwrap_or_else(|| "an enemy".to_string());
+                    .unwrap_or_else(|| "敵".to_string());
                 log_msgs.push(format!(
-                    "Y{} {} collapses before {}",
+                    "Y{} {}が{}の前に滅ぶ",
                     year, col_name, atk_name
                 ));
                 self.nations.remove(col_ni);
@@ -453,14 +453,14 @@ impl Continent {
         });
         for (na, nb, yrs) in ended_wars {
             log_msgs.push(format!(
-                "Y{} peace returns after {} years ({} / {})",
+                "Y{} {}年の戦のあと{}と{}が和平する",
                 year, yrs, na, nb
             ));
             // §9 War weariness: if the war was long, log exhaustion once per
             // nation (both sides) at resolution time.
             if yrs >= WAR_WEARINESS_THRESHOLD {
-                log_msgs.push(format!("Y{} {} is exhausted by the long war", year, na));
-                log_msgs.push(format!("Y{} {} is exhausted by the long war", year, nb));
+                log_msgs.push(format!("Y{} 長期戦で{}が疲弊する", year, na));
+                log_msgs.push(format!("Y{} 長期戦で{}が疲弊する", year, nb));
             }
         }
 

@@ -25,6 +25,7 @@ pub(crate) enum DisasterKind {
 }
 
 impl DisasterKind {
+    #[allow(dead_code)]
     pub(crate) fn label(self) -> &'static str {
         match self {
             DisasterKind::Volcano => "volcano",
@@ -120,9 +121,9 @@ impl Continent {
             let rep = applied_positive[0];
             let t = self.tiles[rep].terrain;
             let msg = if t == Terrain::Plains || t == Terrain::Forest {
-                format!("Y{} silt makes the floodplain bloom", year)
+                format!("Y{} 氾濫原に肥沃な土が積もる", year)
             } else {
-                format!("Y{} ash-rich soil revives the slopes", year)
+                format!("Y{} 火山灰が斜面を蘇らせる", year)
             };
             self.log_event(msg);
         }
@@ -180,7 +181,7 @@ impl Continent {
                             let already = self.settlements[si].traits;
                             if already & TRAIT_MASONRY == 0 {
                                 self.settlements[si].traits |= TRAIT_MASONRY | TRAIT_COLD_RESIST;
-                                self.log_event(format!("Y{} mountain folk raise stone walls", year));
+                                self.log_event(format!("Y{} 山の民が石垣を築く", year));
                             }
                         }
                     }
@@ -189,7 +190,7 @@ impl Continent {
                 let delay = 6 + (self.roll() * 8.0) as u32;
                 let delta = 0.15 + self.roll() * 0.20; // 0.15..0.35
                 self.enqueue_soil_enrichment(epicentre, delta, delay);
-                self.log_event(format!("Y{} a volcano buries the region", year));
+                self.log_event(format!("Y{} 火山が地方を埋める", year));
             }
 
             DisasterKind::Quake => {
@@ -207,7 +208,7 @@ impl Continent {
                 // Effect 2: rubble raises K slightly (delayed 8..14 years)
                 let delay = 8 + (self.roll() * 6.0) as u32;
                 self.enqueue_soil_enrichment(epicentre, 0.10, delay);
-                self.log_event(format!("Y{} the earth splits beneath the mountains", year));
+                self.log_event(format!("Y{} 山の下で大地が裂ける", year));
             }
 
             DisasterKind::Flood => {
@@ -238,14 +239,14 @@ impl Continent {
                     if self.settlements[si].traits & TRAIT_FLOOD_RESILIENCE == 0 {
                         self.settlements[si].traits |= TRAIT_FLOOD_RESILIENCE;
                         let yr = self.year;
-                        self.log_event(format!("Y{} a people masters the floods", yr));
+                        self.log_event(format!("Y{} 民が洪水を治める", yr));
                     }
                 }
                 // Effect 2: alluvium raises flood-plain K (faster, 3..8 years)
                 let delay = 3 + (self.roll() * 5.0) as u32;
                 let delta = 0.10 + self.roll() * 0.15; // 0.10..0.25
                 self.enqueue_soil_enrichment(epicentre, delta, delay);
-                self.log_event(format!("Y{} floods drown the river towns", year));
+                self.log_event(format!("Y{} 洪水が川沿いの町を呑む", year));
             }
 
             DisasterKind::Drought => {
@@ -284,10 +285,7 @@ impl Continent {
                         years_left: dip_years + 1,
                     });
                 }
-                self.log_event(format!(
-                    "Y{} drought cracks the desert-edge fields",
-                    year
-                ));
+                self.log_event(format!("Y{} 砂漠の縁の畑が干上がる", year));
             }
 
             DisasterKind::Plague => {
@@ -315,7 +313,7 @@ impl Continent {
                         self.plague_nations.entry(nid_u).or_insert(year);
                     }
                 }
-                self.log_event(format!("Y{} plague empties the crowded city", year));
+                self.log_event(format!("Y{} 疫病が混み合った都市を空にする", year));
             }
 
             DisasterKind::Tsunami => {
@@ -388,7 +386,7 @@ impl Continent {
                     });
                 }
 
-                self.log_event(format!("Y{} a tsunami swallows the coast", year));
+                self.log_event(format!("Y{} 津波が海岸を呑む", year));
             }
         }
     }
@@ -403,7 +401,7 @@ impl Continent {
         let count = COLS * ROWS;
 
         // 2. Volcano — pick a random Mountain tile
-        if self.roll() < VOLCANO_CHANCE {
+        if self.roll() < VOLCANO_CHANCE * self.scenario.volcano_mul() {
             let cands: Vec<usize> = (0..count)
                 .filter(|&i| self.tiles[i].terrain == Terrain::Mountain)
                 .collect();
@@ -441,7 +439,7 @@ impl Continent {
         }
 
         // 5. Drought — habitable tile adjacent to Desert
-        if self.roll() < DROUGHT_CHANCE {
+        if self.roll() < DROUGHT_CHANCE * self.scenario.drought_mul() {
             let cands: Vec<usize> = (0..count)
                 .filter(|&i| {
                     self.tiles[i].habitable
@@ -569,7 +567,7 @@ impl Continent {
                             }
                         }
                         self.disaster_count += 1;
-                        self.log_event(format!("Y{} wildfire sweeps the forest", year));
+                        self.log_event(format!("Y{} 山火事が森を走る", year));
                     }
                 }
             }

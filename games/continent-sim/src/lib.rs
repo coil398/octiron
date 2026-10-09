@@ -10,11 +10,11 @@
 //! distribution of towns and the shape of the frontier. River-fed temperate
 //! plains hold the highest `K`, exactly as the doc demands.
 //!
-//! There is no map drawing yet (that arrives with mouse input in a later
-//! slice). You watch, and you nudge time. The chronicle on the right is the
-//! main output — the history the terrain wrote.
+//! The map, the chronicle, and the god's hand are the output. From the first
+//! year the player can raise land, bless a people, or found a tribe. Time,
+//! overlay, and art style stay on the number keys and G.
 //!
-//! Controls: `Space` pause · `1`-`4` speed · `O` overlay · `R` new world.
+//! Controls: `Space` pause · `1`-`4` speed · `5`-`8` god tools · `O` overlay · `R` new world.
 
 use octiron::{Assets, Color, Font, Frame, Game, Key, MouseButton, Painter, Rect, Scene3D, Sound, Texture, Vec2, World, FONT_GLYPH_H};
 use std::cmp::Ordering;
@@ -62,7 +62,7 @@ pub(crate) const PANEL_W: f32 = 220.0;
 #[cfg(target_arch = "wasm32")]
 const SCREEN_W: f32 = PANEL_X + PANEL_W + MARGIN; // 1158
 #[cfg(target_arch = "wasm32")]
-const SCREEN_H: f32 = MAP_Y + MAP_H + 30.0; // 716
+const SCREEN_H: f32 = MAP_Y + MAP_H + 48.0; // 734
 
 // ---- title / setup flow ---------------------------------------------------
 
@@ -246,6 +246,13 @@ pub(crate) struct Continent {
     /// Set to `true` whenever sim state that affects the static mesh changes.
     /// Cleared after `scene_static` is rebuilt.
     pub(crate) scene_dirty: bool,
+    /// Hash of the map features that change the static mesh. Year and raw
+    /// population are excluded so a running sim does not rebuild every tick.
+    pub(crate) scene_sig: u64,
+    /// Flat-color terrain sheet (base tiles, coast autotile, river autotile).
+    pub(crate) atlas_clean: Option<Texture>,
+    /// Click tool available from the first year, outside edit mode.
+    pub(crate) god_tool: GodTool,
     // ---- §8 population / nation history (observation-only) -----------------
     /// Bounded ring buffer of total-population samples (one per year, capped at
     /// HIST_CAP).  Observation-only — never read by tick/step_*/sim_rng.
@@ -342,6 +349,9 @@ impl Default for Continent {
             elapsed_secs: 0.0,
             scene_static: None,
             scene_dirty: true,
+            scene_sig: 0,
+            atlas_clean: None,
+            god_tool: GodTool::Raise,
             hist_pop: Vec::new(),
             hist_nations: Vec::new(),
             font: None,
@@ -353,6 +363,16 @@ impl Default for Continent {
 
 impl Continent {
     fn log_event(&mut self, msg: String) {
+        // Drop a line whose words match the previous one. Years change, the
+        // sentence often does not, and a chronicle of sixteen copies is unread.
+        let msg_body = msg.split_once(' ').map(|(_, rest)| rest).unwrap_or(msg.as_str());
+        let same = self.log.last().is_some_and(|prev| {
+            let prev_body = prev.split_once(' ').map(|(_, rest)| rest).unwrap_or(prev.as_str());
+            prev_body == msg_body
+        });
+        if same {
+            return;
+        }
         self.log.push(msg);
         if self.log.len() > LOG_LINES {
             let excess = self.log.len() - LOG_LINES;
@@ -388,13 +408,80 @@ impl Continent {
         Some(candidates[idx_pick.min(candidates.len() - 1)])
     }
 
-    /// Returns a short string listing which tech flags are set, e.g. "I S - W".
+    /// Discovered technologies as words, or 「なし」.
     fn tech_display(tech: u8) -> String {
-        let i = if tech & TECH_IRRIGATION != 0 { "I" } else { "-" };
-        let s = if tech & TECH_SEAFARING != 0 { "S" } else { "-" };
-        let m = if tech & TECH_METALLURGY != 0 { "M" } else { "-" };
-        let w = if tech & TECH_WRITING != 0 { "W" } else { "-" };
-        format!("{} {} {} {}", i, s, m, w)
+        let mut parts: Vec<&str> = Vec::new();
+        if tech & TECH_IRRIGATION != 0 { parts.push("灌漑"); }
+        if tech & TECH_SEAFARING != 0 { parts.push("航海"); }
+        if tech & TECH_METALLURGY != 0 { parts.push("冶金"); }
+        if tech & TECH_WRITING != 0 { parts.push("文字"); }
+        if parts.is_empty() { "なし".to_string() } else { parts.join("・") }
+    }
+
+    /// Nation name for a settlement, or a placeholder when it has no banner.
+    pub(crate) fn settlement_nation_name(&self, si: usize) -> String {
+        let nid = self.nation_of.get(si).copied().unwrap_or(-1);
+        if nid < 0 {
+            return "名もなき民".to_string();
+        }
+        self.nations
+            .iter()
+            .find(|n| n.id as i32 == nid)
+            .map(|n| n.name.clone())
+            .unwrap_or_else(|| "名もなき民".to_string())
+    }
+
+    /// Progress toward one nation holding the known world.
+    pub(crate) fn goal_line(&self) -> String {
+        if self.extinction_logged {
+            return "滅亡".to_string();
+        }
+        if self.unification_logged {
+            return "統一".to_string();
+        }
+        let n = self.settlements.len();
+        if n == 0 {
+            return "統一 0%".to_string();
+        }
+        let best = self.nations.iter().map(|nat| nat.territory.len()).max().unwrap_or(0);
+        let share = best as f32 / n as f32;
+        let pct = (share / UNIFICATION_THRESHOLD * 100.0).clamp(0.0, 100.0);
+        format!("統一 {:.0}%", pct)
+    }
+
+    /// FNV-1a over terrain, settlements, nations, and active scars.
+    fn map_signature(&self) -> u64 {
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        let mut mix = |v: u64| {
+            h ^= v;
+            h = h.wrapping_mul(0x100_0000_01b3);
+        };
+        mix(self.tiles.len() as u64);
+        for t in &self.tiles {
+            mix(t.terrain.index() as u64);
+        }
+        mix(self.settlements.len() as u64);
+        for (i, s) in self.settlements.iter().enumerate() {
+            mix(s.tile as u64);
+            mix(if s.city { 1 } else { 0 });
+            let nid = self.nation_of.get(i).copied().unwrap_or(-1);
+            mix(nid as u32 as u64);
+        }
+        for (i, &sc) in self.scorch.iter().enumerate() {
+            if sc > self.year {
+                mix(i as u64);
+            }
+        }
+        mix(match self.overlay {
+            Overlay::Terrain => 0,
+            Overlay::Carrying => 1,
+            Overlay::Population => 2,
+            Overlay::Nation => 3,
+            Overlay::Tech => 4,
+            Overlay::Resource => 5,
+        });
+        mix(self.current_era().index() as u64);
+        h
     }
 
     /// Returns the union of all technology flags across all settlements —
@@ -525,6 +612,18 @@ impl Game for Continent {
         }
         if input.is_key_pressed(Key::Digit4) {
             self.speed = 4;
+        }
+        if input.is_key_pressed(Key::Digit5) {
+            self.god_tool = GodTool::Inspect;
+        }
+        if input.is_key_pressed(Key::Digit6) {
+            self.god_tool = GodTool::Raise;
+        }
+        if input.is_key_pressed(Key::Digit7) {
+            self.god_tool = GodTool::Grace;
+        }
+        if input.is_key_pressed(Key::Digit8) {
+            self.god_tool = GodTool::Found;
         }
         if input.is_key_pressed(Key::KeyO) {
             self.overlay = self.overlay.next();
@@ -680,9 +779,9 @@ impl Game for Continent {
                                 self.scene_dirty = true;
                                 let year = self.year;
                                 self.log_event(format!(
-                                    "Y{} divine wrath: {} sent by the god",
+                                    "Y{} 神の怒り: {}",
                                     year,
-                                    kind.label()
+                                    kind.label_jp()
                                 ));
                             }
                         }
@@ -717,9 +816,9 @@ impl Game for Continent {
                         self.scene_dirty = true;
                         let year = self.year;
                         self.log_event(format!(
-                            "Y{} divine will reshapes a tile to {:?}",
+                            "Y{} 神意が大地を{}にする",
                             year,
-                            new_terrain.tile_name()
+                            new_terrain.tile_name_jp()
                         ));
                     }
                 }
@@ -732,9 +831,25 @@ impl Game for Continent {
                 }
             }
         } else {
-            self.hovered_tile = None;
+            self.hovered_tile = self.tile_at(input.cursor());
             if input.is_mouse_pressed(MouseButton::Left) {
-                self.selected_tile = self.tile_at(input.cursor());
+                if let Some(hi) = self.hovered_tile {
+                    match self.god_tool {
+                        GodTool::Inspect => self.selected_tile = Some(hi),
+                        GodTool::Raise => {
+                            self.god_raise(hi);
+                            self.scene_dirty = true;
+                        }
+                        GodTool::Grace => {
+                            self.edit_grace(hi);
+                            self.scene_dirty = true;
+                        }
+                        GodTool::Found => {
+                            self.edit_found(hi);
+                            self.scene_dirty = true;
+                        }
+                    }
+                }
             }
         }
 
@@ -750,10 +865,14 @@ impl Game for Continent {
             if self.accum > 1.0 {
                 self.accum = 1.0;
             }
-            // Sim advanced: settlements/nations/scorch/year changed → invalidate
-            // static mesh so buildings/tints/farmland are rebuilt next frame.
+            // Rebuild the 3D mesh only when the map itself changed. A year of
+            // population growth is not enough.
             if budget > 0 {
-                self.scene_dirty = true;
+                let sig = self.map_signature();
+                if sig != self.scene_sig {
+                    self.scene_sig = sig;
+                    self.scene_dirty = true;
+                }
             }
         }
 
@@ -879,6 +998,7 @@ impl Game for Continent {
         }
         self.draw_panel(painter);
         self.draw_status(painter);
+        self.draw_outcome(painter);
         self.draw_intervention_hud(painter);
         self.draw_selection_panel(painter);
         // Help overlay rendered last so it sits on top of everything.
@@ -1063,12 +1183,29 @@ mod tests {
             elapsed_secs: 0.0,
             scene_static: None,
             scene_dirty: true,
+            scene_sig: 0,
+            atlas_clean: None,
+            god_tool: GodTool::Raise,
             hist_pop: Vec::new(),
             hist_nations: Vec::new(),
             font: None,
         };
         c.generate();
         c
+    }
+
+    /// A space must keep its advance, or the chronicle collapses into one word.
+    #[test]
+    fn space_advance_keeps_chronicle_readable() {
+        let font = octiron::Font::from_bytes(include_bytes!("../assets/ipag-subset.ttf"));
+        let space = font.advances_sum(" ", 16.0);
+        assert!(space > 1.0, "space advance {space}");
+        let full = font.advances_sum("Y0 5 tribes take root", 16.0);
+        let collapsed = font.advances_sum("Y05tribestakeroot", 16.0);
+        assert!(
+            full > collapsed + space * 0.5,
+            "spaced width {full} collapsed {collapsed} space {space}"
+        );
     }
 
     // ---- terrain / world generation -----------------------------------------
