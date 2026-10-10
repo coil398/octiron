@@ -85,26 +85,6 @@ pub(crate) fn screen_px() -> (f32, f32) {
     (PANEL_X + PANEL_W + MARGIN, MAP_Y + MAP_H + CHROME_H)
 }
 
-pub(crate) fn ui_card(
-    painter: &mut Painter,
-    x: f32,
-    y: f32,
-    w: f32,
-    h: f32,
-    fill: Color,
-    border: Color,
-    t: f32,
-) {
-    painter.rect(x, y, w, h, border);
-    painter.rect(
-        x + t,
-        y + t,
-        (w - t * 2.0).max(0.0),
-        (h - t * 2.0).max(0.0),
-        fill,
-    );
-}
-
 fn grouped(n: u64) -> String {
     let s = n.to_string();
     let mut out = String::new();
@@ -126,13 +106,6 @@ fn chronicle_parts(line: &str) -> (String, String) {
         }
     }
     (String::new(), line.to_string())
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum ChipTone {
-    Quiet,
-    On,
-    Warm,
 }
 
 // ---- atlas / library loading -----------------------------------------------
@@ -596,24 +569,51 @@ impl Continent {
             }
         }
 
-        // Nation territory is a thin border so the terrain art stays visible.
+        // Realm outline: only the edge that faces another people, or the wild.
         if self.overlay != Overlay::Carrying && self.overlay != Overlay::Resource {
+            let mut owner = vec![-1i32; self.tiles.len()];
+            let mut tint: Vec<Color> = vec![[0.0, 0.0, 0.0, 0.0]; self.tiles.len()];
             for nation in &self.nations {
-                let border = [nation.color[0], nation.color[1], nation.color[2], 0.95];
+                let border = [nation.color[0], nation.color[1], nation.color[2], 0.92];
                 for &si in &nation.territory {
-                    if si >= self.settlements.len() {
+                    let Some(s) = self.settlements.get(si) else { continue };
+                    if s.tile < owner.len() {
+                        owner[s.tile] = nation.id as i32;
+                        tint[s.tile] = border;
+                    }
+                }
+            }
+            let edges: [(i32, i32); 4] = [(0, -1), (0, 1), (-1, 0), (1, 0)];
+            for tile_idx in 0..owner.len() {
+                let id = owner[tile_idx];
+                if id < 0 {
+                    continue;
+                }
+                let col = tile_idx % COLS;
+                let row = tile_idx / COLS;
+                let (x, y, size) = view_tile(col, row, pan, zoom);
+                if x + size <= MAP_X || x >= map_right || y + size <= MAP_Y || y >= map_bottom {
+                    continue;
+                }
+                let border = tint[tile_idx];
+                let b = 1.5;
+                for (k, (dc, dr)) in edges.iter().enumerate() {
+                    let nc = col as i32 + dc;
+                    let nr = row as i32 + dr;
+                    let foreign = if nc < 0 || nr < 0 || nc >= COLS as i32 || nr >= ROWS as i32 {
+                        true
+                    } else {
+                        owner[idx(nc as usize, nr as usize)] != id
+                    };
+                    if !foreign {
                         continue;
                     }
-                    let tile_idx = self.settlements[si].tile;
-                    let r = self.view_tile_rect(tile_idx);
-                    if r.x + r.w <= MAP_X || r.x >= map_right || r.y + r.h <= MAP_Y || r.y >= map_bottom {
-                        continue;
+                    match k {
+                        0 => painter.rect(x, y, size, b, border),
+                        1 => painter.rect(x, y + size - b, size, b, border),
+                        2 => painter.rect(x, y, b, size, border),
+                        _ => painter.rect(x + size - b, y, b, size, border),
                     }
-                    let b = 2.0;
-                    painter.rect(r.x, r.y, r.w, b, border);
-                    painter.rect(r.x, r.y + r.h - b, r.w, b, border);
-                    painter.rect(r.x, r.y, b, r.h, border);
-                    painter.rect(r.x + r.w - b, r.y, b, r.h, border);
                 }
             }
         }
@@ -738,28 +738,48 @@ impl Continent {
         }
 
         if self.overlay != Overlay::Population {
-            for s in &self.settlements {
+            // One figure per people. Everyone else is a point of light, not a letter.
+            let mut capital = vec![false; self.settlements.len()];
+            for nation in &self.nations {
+                let mut best: Option<(usize, f32)> = None;
+                for &si in &nation.territory {
+                    let Some(s) = self.settlements.get(si) else { continue };
+                    if best.map(|(_, p)| s.pop > p).unwrap_or(true) {
+                        best = Some((si, s.pop));
+                    }
+                }
+                if let Some((si, _)) = best {
+                    capital[si] = true;
+                }
+            }
+            for (si, s) in self.settlements.iter().enumerate() {
                 let col = s.tile % COLS;
                 let row = s.tile / COLS;
                 let (tx, ty, tsize) = view_tile(col, row, pan, zoom);
                 if tx + tsize <= MAP_X || tx >= map_right || ty + tsize <= MAP_Y || ty >= map_bottom {
                     continue;
                 }
-                let name = if s.city {
-                    "char-monarch"
-                } else if s.pop > 200.0 {
-                    "char-priest"
-                } else if s.tech & TECH_SEAFARING != 0 {
-                    "char-merchant"
+                let nid = self.nation_of.get(si).copied().unwrap_or(-1);
+                let mark = if nid >= 0 {
+                    self.nations
+                        .iter()
+                        .find(|n| n.id as i32 == nid)
+                        .map(|n| [n.color[0], n.color[1], n.color[2], 0.95])
+                        .unwrap_or([0.93, 0.90, 0.84, 0.7])
                 } else {
-                    "char-nomad"
+                    [0.93, 0.90, 0.84, 0.55]
                 };
-                let m = tsize * 0.88;
-                let dst = Rect::new(tx + (tsize - m) * 0.5, ty + (tsize - m) * 0.5, m, m);
-                if let (Some(lib), Some(&src)) = (self.atlas_lib, self.lib_rects.get(name)) {
-                    painter.sprite_region(lib, dst, src, [1.0, 1.0, 1.0, 1.0]);
-                } else {
-                    painter.rect(dst.x, dst.y, dst.w, dst.h, [0.95, 0.85, 0.45, 1.0]);
+                let major = s.city || (capital[si] && s.pop >= 60.0);
+                if major {
+                    let h = if s.city { 9.0 } else { 6.0 };
+                    let w = 2.0;
+                    let bx = tx + (tsize - w) * 0.5;
+                    let by = ty + (tsize - h) * 0.5;
+                    painter.rect(bx, by + 2.0, w, (h - 2.0).max(2.0), mark);
+                    painter.rect(bx - 1.0, by, w + 2.0, 2.0, mark);
+                } else if s.pop >= 22.0 {
+                    let d = if s.city { 3.0 } else { 2.0 };
+                    painter.rect(tx + (tsize - d) * 0.5, ty + (tsize - d) * 0.5, d, d, mark);
                 }
             }
         }
@@ -920,74 +940,24 @@ impl Continent {
         self.tx(painter, cx - w * 0.5, y, px, color, text);
     }
 
-    fn chip_width(&self, painter: &mut Painter, label: &str, key: &str) -> f32 {
-        let label_w = self.tx_w(painter, 13.0, label);
-        let key_w = if key.is_empty() {
-            0.0
-        } else {
-            self.tx_w(painter, 11.0, key) + 8.0
-        };
-        22.0 + label_w + key_w
-    }
-
-    fn chip(
-        &self,
-        painter: &mut Painter,
-        x: f32,
-        y: f32,
-        label: &str,
-        key: &str,
-        tone: ChipTone,
-    ) -> f32 {
-        let (fill, border, ink) = match tone {
-            ChipTone::Quiet => (UI_RAISED, UI_LINE, UI_INK),
-            ChipTone::On => (UI_BLUE_BG, UI_ACCENT, UI_INK),
-            ChipTone::Warm => (UI_WARM_BG, UI_GOLD, UI_INK),
-        };
-        let w = self.chip_width(painter, label, key);
-        let h = 28.0;
-        ui_card(painter, x, y, w, h, fill, border, 1.0);
-        let label_w = self.tx_w(painter, 13.0, label);
-        self.tx(painter, x + 11.0, y + 7.0, 13.0, ink, label);
-        if !key.is_empty() {
-            self.tx(
-                painter,
-                x + 11.0 + label_w + 8.0,
-                y + 8.0,
-                11.0,
-                UI_DIM,
-                key,
-            );
+    fn fit_line(&self, painter: &mut Painter, px: f32, text: &str, max_w: f32) -> String {
+        if text.is_empty() || self.tx_w(painter, px, text) <= max_w {
+            return text.to_string();
         }
-        w
+        let chars: Vec<char> = text.chars().collect();
+        let mut n = chars.len();
+        while n > 0 {
+            let head: String = chars[..n].iter().collect();
+            let shown = format!("{head}...");
+            if self.tx_w(painter, px, &shown) <= max_w {
+                return shown;
+            }
+            n -= 1;
+        }
+        String::new()
     }
 
-    fn square_chip(
-        &self,
-        painter: &mut Painter,
-        x: f32,
-        y: f32,
-        label: &str,
-        tone: ChipTone,
-    ) -> f32 {
-        let (fill, border, ink) = match tone {
-            ChipTone::Quiet => (UI_RAISED, UI_LINE, UI_DIM),
-            ChipTone::On => (UI_BLUE_BG, UI_ACCENT, UI_INK),
-            ChipTone::Warm => (UI_WARM_BG, UI_GOLD, UI_INK),
-        };
-        let s = 28.0;
-        ui_card(painter, x, y, s, s, fill, border, 1.0);
-        let tw = self.tx_w(painter, 13.0, label);
-        self.tx(painter, x + (s - tw) * 0.5, y + 7.0, 13.0, ink, label);
-        s
-    }
-
-    fn section_title(&self, painter: &mut Painter, x: f32, y: f32, text: &str) {
-        painter.rect(x, y + 3.0, 3.0, 12.0, UI_ACCENT);
-        self.tx(painter, x + 10.0, y, 13.0, UI_INK, text);
-    }
-
-    fn labeled_row(
+    fn stat_line(
         &self,
         painter: &mut Painter,
         x: f32,
@@ -996,11 +966,13 @@ impl Continent {
         label: &str,
         value: &str,
     ) -> f32 {
-        self.tx(painter, x, y, 13.0, UI_DIM, label);
-        let vw = self.tx_w(painter, 13.0, value);
-        let vx = (x + w - vw).max(x + 72.0);
-        self.tx(painter, vx, y, 13.0, UI_INK, value);
-        y + 22.0
+        let px = 12.0;
+        self.tx(painter, x, y, px, UI_DIM, label);
+        let label_w = self.tx_w(painter, px, label) + 10.0;
+        let shown = self.fit_line(painter, px, value, (w - label_w).max(28.0));
+        let vw = self.tx_w(painter, px, &shown);
+        self.tx(painter, (x + w - vw).max(x + label_w), y, px, UI_INK, &shown);
+        y + 16.0
     }
 
     fn unification_frac(&self) -> f32 {
@@ -1029,50 +1001,52 @@ impl Continent {
         painter.rect(0.0, 0.0, MAP_X, sh, UI_PAGE);
         painter.rect(MAP_X + MAP_W, MAP_Y, MARGIN, MAP_H, UI_PAGE);
         painter.rect(PANEL_X + PANEL_W, 0.0, MARGIN, sh, UI_PAGE);
-        painter.rect(MAP_X - 1.0, MAP_Y - 1.0, MAP_W + 2.0, 1.0, UI_LINE);
-        painter.rect(MAP_X - 1.0, MAP_Y, 1.0, MAP_H, UI_LINE);
-        painter.rect(MAP_X + MAP_W, MAP_Y, 1.0, MAP_H, UI_LINE);
+    }
+
+    fn stroke_series(
+        painter: &mut Painter,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        samples: &[f32],
+        max_v: f32,
+        color: Color,
+    ) {
+        if samples.is_empty() || max_v <= 0.0 {
+            return;
+        }
+        let n = samples.len();
+        let step = w / (n as f32).max(8.0);
+        for (i, &v) in samples.iter().enumerate() {
+            let t = (v / max_v).clamp(0.0, 1.0);
+            let ny = y + h - (h * t).max(1.0);
+            painter.rect(x + i as f32 * step, ny, (step + 0.6).max(1.5), 1.5, color);
+        }
     }
 
     pub(crate) fn draw_panel(&self, painter: &mut Painter) {
         self.paint_frame(painter);
-        ui_card(
-            painter, PANEL_X, MAP_Y, PANEL_W, MAP_H, UI_PANEL, UI_LINE, 1.0,
-        );
-
-        let x = PANEL_X + 16.0;
-        let inner_w = PANEL_W - 32.0;
-        let mut y = MAP_Y + 16.0;
-
-        let state = if self.paused {
-            "停止中".to_string()
-        } else {
-            format!("x{}", self.speed)
-        };
-        let state_w = self.tx_w(painter, 13.0, &state);
-        let state_c = if self.paused { UI_GOLD } else { UI_ACCENT };
-        self.tx(painter, x, y, 13.0, UI_DIM, "大陸シム");
-        self.tx(painter, x + inner_w - state_w, y, 13.0, state_c, &state);
-        y += 22.0;
-
-        let year = format!("{}年", self.year);
-        self.tx(painter, x, y, 26.0, UI_INK, &year);
-        let year_w = self.tx_w(painter, 26.0, &year);
-        let era = self.current_era().label_jp();
-        let era_w = self.tx_w(painter, 12.0, era) + 16.0;
-        let era_x = x + year_w + 12.0;
-        ui_card(
-            painter,
-            era_x,
-            y + 4.0,
-            era_w,
-            22.0,
-            UI_RAISED,
-            UI_LINE,
+        painter.rect(PANEL_X, MAP_Y, PANEL_W, MAP_H, UI_PANEL);
+        painter.rect(
+            PANEL_X,
+            MAP_Y,
             1.0,
+            MAP_H,
+            [UI_GOLD[0], UI_GOLD[1], UI_GOLD[2], 0.45],
         );
-        self.tx(painter, era_x + 8.0, y + 8.0, 12.0, UI_ACCENT, era);
-        y += 40.0;
+
+        let x = PANEL_X + 14.0;
+        let inner_w = PANEL_W - 26.0;
+        let mut y = MAP_Y + 18.0;
+
+        let year = self.year.to_string();
+        self.tx(painter, x, y, 36.0, UI_GOLD, &year);
+        let year_w = self.tx_w(painter, 36.0, &year);
+        self.tx(painter, x + year_w + 6.0, y + 18.0, 13.0, UI_DIM, "年");
+        y += 44.0;
+        self.tx(painter, x, y, 12.0, UI_DIM, self.current_era().label_jp());
+        y += 22.0;
 
         let pop_total: f32 = self.settlements.iter().map(|s| s.pop).sum();
         let colonized = if self.habitable_count > 0 {
@@ -1080,40 +1054,6 @@ impl Continent {
         } else {
             0.0
         };
-        let gap = 8.0;
-        let mw = (inner_w - gap) * 0.5;
-        let mh = 54.0;
-        self.metric(painter, x, y, mw, mh, "人口", &grouped(pop_total as u64));
-        self.metric(
-            painter,
-            x + mw + gap,
-            y,
-            mw,
-            mh,
-            "集落",
-            &grouped(self.settlements.len() as u64),
-        );
-        y += mh + gap;
-        self.metric(
-            painter,
-            x,
-            y,
-            mw,
-            mh,
-            "国家",
-            &self.nations.len().to_string(),
-        );
-        self.metric(
-            painter,
-            x + mw + gap,
-            y,
-            mw,
-            mh,
-            "開拓",
-            &format!("{:.0}%", colonized),
-        );
-        y += mh + 16.0;
-
         let land = self
             .nations
             .iter()
@@ -1128,7 +1068,6 @@ impl Continent {
                     .unwrap_or(std::cmp::Ordering::Equal)
             })
             .map(|n| (n.id, n.name.clone(), self.nation_total_pop(n) as u64));
-
         let wars = if self.wars.is_empty() {
             "なし".to_string()
         } else if let Some(w) = self.wars.iter().max_by_key(|w| w.fronts.len()) {
@@ -1166,213 +1105,151 @@ impl Continent {
             "なし".to_string()
         };
 
+        y = self.stat_line(painter, x, y, inner_w, "人口", &grouped(pop_total as u64));
+        y = self.stat_line(
+            painter,
+            x,
+            y,
+            inner_w,
+            "集落",
+            &grouped(self.settlements.len() as u64),
+        );
+        y = self.stat_line(painter, x, y, inner_w, "国家", &self.nations.len().to_string());
+        y = self.stat_line(painter, x, y, inner_w, "開拓", &format!("{:.0}%", colonized));
         if let Some((_, name, pop)) = &land {
-            y = self.labeled_row(
+            y = self.stat_line(
                 painter,
                 x,
                 y,
                 inner_w,
-                "最大国",
-                &format!("{name} · {}人", grouped(*pop)),
+                "最大",
+                &format!("{name} {}", grouped(*pop)),
             );
         } else {
-            y = self.labeled_row(painter, x, y, inner_w, "最大国", "なし");
+            y = self.stat_line(painter, x, y, inner_w, "最大", "なし");
         }
         if let (Some((lid, _, _)), Some((mid, mname, mpop))) = (&land, &might) {
             if lid != mid {
-                y = self.labeled_row(
+                y = self.stat_line(
                     painter,
                     x,
                     y,
                     inner_w,
-                    "最強国",
-                    &format!("{mname} · {}人", grouped(*mpop)),
+                    "最強",
+                    &format!("{mname} {}", grouped(*mpop)),
                 );
             }
         }
-        y = self.labeled_row(painter, x, y, inner_w, "戦争", &wars);
-        y = self.labeled_row(painter, x, y, inner_w, "災害", &disaster);
-        y = self.labeled_row(painter, x, y, inner_w, "技術", &tech);
-        y = self.labeled_row(painter, x, y, inner_w, "特性", &traits);
-        y += 6.0;
+        y = self.stat_line(painter, x, y, inner_w, "戦争", &wars);
+        y = self.stat_line(painter, x, y, inner_w, "災害", &disaster);
+        y = self.stat_line(painter, x, y, inner_w, "技術", &tech);
+        y = self.stat_line(painter, x, y, inner_w, "特性", &traits);
+        y += 8.0;
 
         let goal = self.goal_line();
+        self.tx(painter, x, y, 13.0, UI_GOLD, &goal);
+        y += 16.0;
         let frac = self.unification_frac();
-        ui_card(painter, x, y, inner_w, 48.0, UI_RAISED, UI_LINE, 1.0);
-        self.tx(painter, x + 12.0, y + 8.0, 12.0, UI_DIM, "目標");
-        let goal_w = self.tx_w(painter, 13.0, &goal);
-        self.tx(
-            painter,
-            x + inner_w - 12.0 - goal_w,
-            y + 7.0,
-            13.0,
-            UI_GOLD,
-            &goal,
-        );
-        painter.rect(x + 12.0, y + 30.0, inner_w - 24.0, 6.0, UI_TRACK);
-        painter.rect(x + 12.0, y + 30.0, (inner_w - 24.0) * frac, 6.0, UI_GOLD);
-        y += 60.0;
+        painter.rect(x, y, inner_w, 2.0, UI_TRACK);
+        painter.rect(x, y, inner_w * frac, 2.0, UI_GOLD);
+        y += 16.0;
 
-        self.section_title(painter, x, y, "推移");
-        let legend_pop = "人口";
         let legend_n = "国家";
-        let ln_w = self.tx_w(painter, 12.0, legend_n);
-        let lp_w = self.tx_w(painter, 12.0, legend_pop);
-        let legend_x = x + inner_w - (8.0 + ln_w + 16.0 + 8.0 + lp_w);
-        painter.rect(legend_x, y + 4.0, 8.0, 8.0, UI_AMBER);
-        self.tx(painter, legend_x + 12.0, y, 12.0, UI_DIM, legend_pop);
-        let nx = legend_x + 12.0 + lp_w + 12.0;
-        painter.rect(nx, y + 4.0, 8.0, 8.0, UI_ACCENT);
-        self.tx(painter, nx + 12.0, y, 12.0, UI_DIM, legend_n);
-        y += 22.0;
+        let legend_pop = "人口";
+        let ln_w = self.tx_w(painter, 11.0, legend_n);
+        let lp_w = self.tx_w(painter, 11.0, legend_pop);
+        self.tx(painter, x + inner_w - ln_w - 12.0 - lp_w, y, 11.0, UI_DIM, legend_pop);
+        self.tx(painter, x + inner_w - ln_w, y, 11.0, UI_DIM, legend_n);
+        y += 14.0;
 
-        let plot_h = 64.0;
-        ui_card(painter, x, y, inner_w, plot_h, UI_RAISED, UI_LINE, 1.0);
-        let plot_x = x + 8.0;
-        let plot_y = y + 6.0;
-        let plot_w = inner_w - 16.0;
-        let plot_inner_h = plot_h - 12.0;
-        let n = self.hist_pop.len();
-        if n == 0 {
-            painter.rect(plot_x, plot_y + plot_inner_h * 0.5, plot_w, 1.0, UI_LINE);
-            self.tx(
-                painter,
-                plot_x + 8.0,
-                plot_y + 18.0,
-                13.0,
-                UI_DIM,
-                "まだ推移はない",
-            );
+        let plot_h = 40.0;
+        if self.hist_pop.is_empty() {
+            painter.rect(x, y + plot_h - 1.0, inner_w, 1.0, UI_TRACK);
+            self.tx(painter, x, y + 12.0, 12.0, UI_DIM, "まだ推移はない");
         } else {
-            // Headroom keeps a flat stretch from painting as a solid block.
             let max_pop = self.hist_pop.iter().cloned().fold(1.0f32, f32::max) * 1.18;
-            let bar_w = plot_w / (n as f32).max(8.0);
-            for (i, &pop) in self.hist_pop.iter().enumerate() {
-                let t = (pop / max_pop).clamp(0.0, 1.0);
-                let bh = (plot_inner_h * t).max(1.0);
-                painter.rect(
-                    plot_x + i as f32 * bar_w,
-                    plot_y + plot_inner_h - bh,
-                    bar_w.max(1.0),
-                    bh,
-                    [UI_AMBER[0], UI_AMBER[1], UI_AMBER[2], 0.55],
-                );
-            }
-            painter.rect(plot_x, plot_y + plot_inner_h * 0.5, plot_w, 1.0, UI_LINE);
-            let stroke = [1.0, 0.78, 0.42, 1.0];
-            for (i, &pop) in self.hist_pop.iter().enumerate() {
-                let t = (pop / max_pop).clamp(0.0, 1.0);
-                let ny = plot_y + plot_inner_h - (plot_inner_h * t).max(1.0);
-                painter.rect(
-                    plot_x + i as f32 * bar_w,
-                    ny,
-                    (bar_w + 1.0).max(2.0),
-                    2.0,
-                    stroke,
-                );
-            }
-        }
-        let nn = self.hist_nations.len();
-        if nn >= 1 {
-            let max_nations =
-                (self.hist_nations.iter().cloned().fold(1u16, u16::max) as f32) * 1.18;
-            let bar_w = plot_w / (nn as f32).max(8.0);
-            for (i, &cnt) in self.hist_nations.iter().enumerate() {
-                let t = (cnt as f32 / max_nations).clamp(0.0, 1.0);
-                let ny = plot_y + plot_inner_h - (plot_inner_h * t).max(1.0);
-                painter.rect(
-                    plot_x + i as f32 * bar_w,
-                    ny,
-                    (bar_w + 1.0).max(2.0),
-                    2.0,
-                    UI_ACCENT,
-                );
-            }
-        }
-        y += plot_h + 14.0;
-
-        let list_bot = MAP_Y + MAP_H - 12.0;
-        if list_bot > y + 36.0 {
-            ui_card(
+            Self::stroke_series(
                 painter,
                 x,
                 y,
                 inner_w,
-                list_bot - y,
-                UI_RAISED,
-                UI_LINE,
-                1.0,
+                plot_h,
+                &self.hist_pop,
+                max_pop,
+                UI_GOLD,
             );
-            self.section_title(painter, x + 12.0, y + 10.0, "年代記");
-            let row_h = 20.0;
-            let first = y + 34.0;
-            let slots = ((list_bot - 10.0 - first) / row_h).floor().max(0.0) as usize;
+            if !self.hist_nations.is_empty() {
+                let nations: Vec<f32> = self.hist_nations.iter().map(|n| *n as f32).collect();
+                let max_n = nations.iter().cloned().fold(1.0f32, f32::max) * 1.18;
+                Self::stroke_series(
+                    painter,
+                    x,
+                    y,
+                    inner_w,
+                    plot_h,
+                    &nations,
+                    max_n,
+                    [UI_DIM[0], UI_DIM[1], UI_DIM[2], 0.85],
+                );
+            }
+        }
+        y += plot_h + 16.0;
+
+        self.tx(painter, x, y, 11.0, UI_DIM, "年代記");
+        y += 16.0;
+        let list_bot = MAP_Y + MAP_H - 12.0;
+        let row_h = 16.0;
+        let slots = ((list_bot - y) / row_h).floor().max(0.0) as usize;
+        if self.log.is_empty() {
+            self.tx(painter, x, y, 12.0, UI_DIM, "まだ記録はない");
+        } else if slots > 0 {
             let start = self.log.len().saturating_sub(slots);
-            if self.log.is_empty() {
-                self.tx(painter, x + 12.0, first, 13.0, UI_DIM, "まだ記録はない");
-            } else {
-                for (i, line) in self.log.iter().skip(start).enumerate() {
-                    let ly = first + i as f32 * row_h;
-                    let (year, body) = chronicle_parts(line);
-                    if year.is_empty() {
-                        self.tx(painter, x + 12.0, ly, 13.0, UI_INK, &body);
-                    } else {
-                        let yw = self.tx_w(painter, 12.0, &year);
-                        self.tx(
-                            painter,
-                            x + 12.0 + 28.0 - yw,
-                            ly + 1.0,
-                            12.0,
-                            UI_ACCENT,
-                            &year,
-                        );
-                        self.tx(painter, x + 48.0, ly, 13.0, UI_INK, &body);
-                    }
+            let shown = self.log.len() - start;
+            painter.rect(
+                x + 26.0,
+                y + 2.0,
+                1.0,
+                (shown as f32 * row_h - 6.0).max(1.0),
+                [UI_DIM[0], UI_DIM[1], UI_DIM[2], 0.28],
+            );
+            for (i, line) in self.log.iter().skip(start).enumerate() {
+                let ly = y + i as f32 * row_h;
+                let (year, body) = chronicle_parts(line);
+                if year.is_empty() {
+                    let shown = self.fit_line(painter, 12.0, &body, inner_w);
+                    self.tx(painter, x, ly, 12.0, UI_INK, &shown);
+                } else {
+                    let yw = self.tx_w(painter, 11.0, &year);
+                    self.tx(painter, x + 20.0 - yw, ly + 1.0, 11.0, UI_DIM, &year);
+                    let shown = self.fit_line(painter, 12.0, &body, inner_w - 32.0);
+                    self.tx(painter, x + 32.0, ly, 12.0, UI_INK, &shown);
                 }
             }
         }
-    }
-
-    fn metric(
-        &self,
-        painter: &mut Painter,
-        x: f32,
-        y: f32,
-        w: f32,
-        h: f32,
-        label: &str,
-        value: &str,
-    ) {
-        ui_card(painter, x, y, w, h, UI_RAISED, UI_LINE, 1.0);
-        self.tx(painter, x + 12.0, y + 8.0, 12.0, UI_DIM, label);
-        self.tx(painter, x + 12.0, y + 26.0, 18.0, UI_INK, value);
     }
 
     pub(crate) fn draw_status(&self, painter: &mut Painter) {
         let (sw, _) = screen_px();
         let y0 = MAP_Y + MAP_H;
         painter.rect(0.0, y0, sw, CHROME_H, UI_DOCK);
-        painter.rect(0.0, y0, sw, 1.0, UI_LINE);
+        painter.rect(0.0, y0, sw, 1.0, UI_GOLD);
 
-        let cy = y0 + 10.0;
+        let py = 13.0;
+        let y = y0 + 14.0;
         let mut x = 16.0;
-        let pause = if self.paused { "停止中" } else { "停止" };
-        let pause_tone = if self.paused {
-            ChipTone::On
-        } else {
-            ChipTone::Quiet
-        };
-        x += self.chip(painter, x, cy, pause, "Space", pause_tone) + 16.0;
 
-        self.tx(painter, x, cy + 7.0, 12.0, UI_DIM, "速度");
-        x += self.tx_w(painter, 12.0, "速度") + 8.0;
+        let pause = if self.paused { "停止中" } else { "停止" };
+        let pause_c = if self.paused { UI_GOLD } else { UI_DIM };
+        self.tx(painter, x, y, py, pause_c, pause);
+        x += self.tx_w(painter, py, pause) + 6.0;
+        self.tx(painter, x, y + 1.0, 11.0, UI_DIM, "Space");
+        x += self.tx_w(painter, 11.0, "Space") + 20.0;
+
         for s in 1..=4u8 {
-            let tone = if self.speed == s {
-                ChipTone::On
-            } else {
-                ChipTone::Quiet
-            };
-            x += self.square_chip(painter, x, cy, &s.to_string(), tone) + 6.0;
+            let label = s.to_string();
+            let c = if self.speed == s { UI_INK } else { UI_DIM };
+            self.tx(painter, x, y, py, c, &label);
+            x += self.tx_w(painter, py, &label) + 11.0;
         }
         x += 12.0;
 
@@ -1383,90 +1260,61 @@ impl Continent {
             (GodTool::Found, "8"),
         ];
         for (tool, key) in tools {
-            let tone = if self.god_tool == tool {
-                ChipTone::Warm
-            } else {
-                ChipTone::Quiet
-            };
-            x += self.chip(painter, x, cy, tool.label_jp(), key, tone) + 6.0;
+            let on = self.god_tool == tool;
+            self.tx(painter, x, y + 1.0, 11.0, UI_DIM, key);
+            x += self.tx_w(painter, 11.0, key) + 4.0;
+            let name = tool.label_jp();
+            self.tx(painter, x, y, py, if on { UI_GOLD } else { UI_DIM }, name);
+            x += self.tx_w(painter, py, name) + 14.0;
         }
-        x += 12.0;
-        x += self.chip(
-            painter,
-            x,
-            cy,
-            self.overlay.label_jp(),
-            "O",
-            ChipTone::Quiet,
-        ) + 6.0;
+        x += 6.0;
+
+        let overlay = self.overlay.label_jp();
+        self.tx(painter, x, y, py, UI_DIM, overlay);
+        x += self.tx_w(painter, py, overlay) + 4.0;
+        self.tx(painter, x, y + 1.0, 11.0, UI_DIM, "O");
+        x += self.tx_w(painter, 11.0, "O") + 14.0;
+
         let art_name = if self.font.is_some() {
             self.art_style.label_jp()
         } else {
             self.art_style.label()
         };
-        x += self.chip(painter, x, cy, art_name, "G", ChipTone::Quiet) + 6.0;
-        let _ = self.chip(painter, x, cy, "ヘルプ", "H", ChipTone::Quiet);
+        self.tx(painter, x, y, py, UI_DIM, art_name);
+        x += self.tx_w(painter, py, art_name) + 4.0;
+        self.tx(painter, x, y + 1.0, 11.0, UI_DIM, "G");
+        x += self.tx_w(painter, 11.0, "G") + 14.0;
 
-        let faith_w = 168.0;
-        let faith_x = sw - 16.0 - faith_w;
-        if faith_x > x + self.chip_width(painter, "ヘルプ", "H") + 20.0 {
-            self.tx(painter, faith_x, cy + 7.0, 12.0, UI_DIM, "信仰");
-            let bar_x = faith_x + 32.0;
-            let frac = (self.faith / FAITH_MAX).clamp(0.0, 1.0);
-            painter.rect(bar_x, cy + 11.0, 88.0, 6.0, UI_TRACK);
-            let col = if self.faith < 10.0 { UI_RED } else { UI_ACCENT };
-            painter.rect(bar_x, cy + 11.0, 88.0 * frac, 6.0, col);
-            self.tx(
-                painter,
-                bar_x + 96.0,
-                cy + 7.0,
-                12.0,
-                UI_INK,
-                &format!("{:.0}", self.faith),
-            );
-        }
+        self.tx(painter, x, y, py, UI_DIM, "ヘルプ");
+        x += self.tx_w(painter, py, "ヘルプ") + 4.0;
+        self.tx(painter, x, y + 1.0, 11.0, UI_DIM, "H");
+        x += self.tx_w(painter, 11.0, "H") + 12.0;
 
-        let meta_y = cy + 36.0;
-        self.tx(
-            painter,
-            16.0,
-            meta_y,
-            12.0,
-            UI_DIM,
-            self.scenario.label_jp(),
-        );
-        self.tx(painter, 92.0, meta_y, 12.0, UI_DIM, "目標");
-        let bar_x = 128.0;
-        painter.rect(bar_x, meta_y + 5.0, 72.0, 5.0, UI_TRACK);
-        painter.rect(
-            bar_x,
-            meta_y + 5.0,
-            72.0 * self.unification_frac(),
-            5.0,
-            UI_GOLD,
-        );
-        let goal = self.goal_line();
-        self.tx(painter, bar_x + 80.0, meta_y, 12.0, UI_INK, &goal);
-
-        let seed = self.seed.to_string();
-        let seed_w = self.tx_w(painter, 12.0, &seed);
+        let faith_num = format!("{:.0}", self.faith);
+        let faith_num_w = self.tx_w(painter, py, &faith_num);
         let mut right = sw - 16.0;
-        self.tx(painter, right - seed_w, meta_y, 12.0, UI_DIM, &seed);
-        right -= seed_w + 8.0;
-        let seed_label_w = self.tx_w(painter, 12.0, "シード");
-        self.tx(
-            painter,
-            right - seed_label_w,
-            meta_y,
-            12.0,
-            UI_DIM,
-            "シード",
-        );
-        right -= seed_label_w + 22.0;
+        self.tx(painter, right - faith_num_w, y, py, UI_DIM, &faith_num);
+        right -= faith_num_w + 8.0;
+        let bar_w = 48.0;
+        let frac = (self.faith / FAITH_MAX).clamp(0.0, 1.0);
+        painter.rect(right - bar_w, y + 6.0, bar_w, 2.0, UI_TRACK);
+        let bar_c = if self.faith < 10.0 {
+            UI_RED
+        } else {
+            [UI_DIM[0], UI_DIM[1], UI_DIM[2], 0.9]
+        };
+        painter.rect(right - bar_w, y + 6.0, bar_w * frac, 2.0, bar_c);
+        right -= bar_w + 8.0;
+        let faith_w = self.tx_w(painter, py, "信仰");
+        self.tx(painter, right - faith_w, y, py, UI_DIM, "信仰");
+        right -= faith_w + 18.0;
+
         if self.art_style == ArtStyle::Solid3D {
-            let cam = "Q E 回転    Z X 仰角";
+            let cam = "Q E 回転   Z X 仰角";
             let cw = self.tx_w(painter, 12.0, cam);
-            self.tx(painter, right - cw, meta_y, 12.0, UI_DIM, cam);
+            if right - cw > x + 8.0 {
+                self.tx(painter, right - cw, y + 1.0, 12.0, UI_DIM, cam);
+            }
         }
     }
 
@@ -1478,21 +1326,14 @@ impl Continent {
         } else {
             return;
         };
-        let bw = 460.0;
-        let bh = 96.0;
-        let bx = MAP_X + (MAP_W - bw) * 0.5;
-        let by = MAP_Y + 28.0;
-        painter.rect(bx + 5.0, by + 7.0, bw, bh, [0.0, 0.0, 0.0, 0.32]);
-        ui_card(painter, bx, by, bw, bh, UI_PANEL, accent, 2.0);
-        self.tx_centered(painter, bx + bw * 0.5, by + 22.0, 26.0, accent, title);
-        self.tx_centered(
-            painter,
-            bx + bw * 0.5,
-            by + 58.0,
-            14.0,
-            UI_DIM,
-            "時間は止まっています",
-        );
+        let bh = 128.0;
+        let by = MAP_Y + (MAP_H - bh) * 0.40;
+        painter.rect(MAP_X, by, MAP_W, bh, [0.008, 0.010, 0.018, 0.82]);
+        painter.rect(MAP_X, by, MAP_W, 1.0, accent);
+        painter.rect(MAP_X, by + bh - 1.0, MAP_W, 1.0, accent);
+        let cx = MAP_X + MAP_W * 0.5;
+        self.tx_centered(painter, cx, by + 34.0, 32.0, accent, title);
+        self.tx_centered(painter, cx, by + 78.0, 14.0, UI_DIM, "時間は止まっています");
     }
 
     pub(crate) fn draw_selection_panel(&self, painter: &mut Painter) {
@@ -1502,45 +1343,28 @@ impl Continent {
         let col = ti % COLS;
         let row = ti / COLS;
         let (hx, hy, hsize) = view_tile(col, row, self.view_pan, self.view_zoom);
-        let hl = UI_GOLD;
-        let b = 2.0;
-        painter.rect(hx, hy, hsize, b, hl);
-        painter.rect(hx, hy + hsize - b, hsize, b, hl);
-        painter.rect(hx, hy, b, hsize, hl);
-        painter.rect(hx + hsize - b, hy, b, hsize, hl);
+        let b = 1.5;
+        painter.rect(hx, hy, hsize, b, UI_GOLD);
+        painter.rect(hx, hy + hsize - b, hsize, b, UI_GOLD);
+        painter.rect(hx, hy, b, hsize, UI_GOLD);
+        painter.rect(hx + hsize - b, hy, b, hsize, UI_GOLD);
 
         let tile = self.tiles[ti];
-        let mut lines: Vec<(String, String, Color)> = Vec::new();
+        let mut lines: Vec<(String, String)> = Vec::new();
         lines.push((
             "地形".to_string(),
             tile.terrain.tile_name_jp().to_string(),
-            UI_INK,
         ));
         lines.push((
             "収容".to_string(),
             format!(
                 "{:.0} · {}",
                 tile.k,
-                if tile.habitable {
-                    "居住可"
-                } else {
-                    "不毛"
-                }
+                if tile.habitable { "居住可" } else { "不毛" }
             ),
-            UI_INK,
         ));
         if ti < self.resources.len() && self.resources[ti] != Resource::None {
-            let res_color = match self.resources[ti] {
-                Resource::Iron => [0.78, 0.82, 0.90, 1.0],
-                Resource::Horses => [0.86, 0.68, 0.38, 1.0],
-                Resource::Gold => UI_GOLD,
-                Resource::None => UI_INK,
-            };
-            lines.push((
-                "資源".to_string(),
-                self.resources[ti].label_jp().to_string(),
-                res_color,
-            ));
+            lines.push(("資源".to_string(), self.resources[ti].label_jp().to_string()));
         }
 
         let si = self.occupied[ti];
@@ -1554,10 +1378,9 @@ impl Continent {
             if s.inspired_years > 0 {
                 pop.push_str(" · 鼓舞");
             }
-            let kind_color = if s.city { UI_ACCENT } else { UI_INK };
-            lines.push(("人".to_string(), format!("{kind} · {pop}"), kind_color));
-            lines.push(("技術".to_string(), Continent::tech_display(s.tech), UI_INK));
-            lines.push(("特性".to_string(), traits_display(s.traits), UI_INK));
+            lines.push(("人".to_string(), format!("{kind} · {pop}")));
+            lines.push(("技術".to_string(), Continent::tech_display(s.tech)));
+            lines.push(("特性".to_string(), traits_display(s.traits)));
             let nid = self.nation_of.get(si as usize).copied().unwrap_or(-1);
             if nid >= 0 {
                 if let Some(n) = self.nations.iter().find(|n| n.id as i32 == nid) {
@@ -1571,91 +1394,62 @@ impl Continent {
                     if n.golden {
                         banner.push_str(" · 黄金期");
                     }
-                    lines.push(("国家".to_string(), banner, UI_ACCENT));
-                    lines.push(("文化".to_string(), n.culture.to_string(), UI_INK));
-                    lines.push((
-                        "交易".to_string(),
-                        format!("{}か国", n.trade_partners),
-                        UI_INK,
-                    ));
+                    lines.push(("国家".to_string(), banner));
+                    lines.push(("文化".to_string(), n.culture.to_string()));
+                    lines.push(("交易".to_string(), format!("{}か国", n.trade_partners)));
                 }
             } else {
-                lines.push(("国家".to_string(), "無国籍".to_string(), UI_DIM));
+                lines.push(("国家".to_string(), "無国籍".to_string()));
             }
         } else {
-            lines.push(("人".to_string(), "未開地".to_string(), UI_DIM));
+            lines.push(("人".to_string(), "未開地".to_string()));
         }
 
-        let bw = 300.0;
-        let bh = 52.0 + lines.len() as f32 * 24.0;
+        let bw = 268.0;
+        let row_h = 16.0;
+        let bh = 40.0 + lines.len() as f32 * row_h;
         let bx = MAP_X + 16.0;
-        let by = MAP_Y + MAP_H - bh - 16.0;
-        painter.rect(bx + 4.0, by + 6.0, bw, bh, [0.0, 0.0, 0.0, 0.30]);
-        ui_card(painter, bx, by, bw, bh, UI_PANEL, UI_LINE, 1.0);
-        painter.rect(bx + 1.0, by + 1.0, bw - 2.0, 3.0, UI_ACCENT);
-        self.tx(painter, bx + 16.0, by + 16.0, 16.0, UI_INK, "調査");
-        let coord = format!("{col}, {row}");
-        let cw = self.tx_w(painter, 12.0, &coord);
-        self.tx(
-            painter,
-            bx + bw - 16.0 - cw,
-            by + 18.0,
-            12.0,
-            UI_DIM,
-            &coord,
-        );
+        let by = MAP_Y + MAP_H - bh - 14.0;
+        painter.rect(bx, by, bw, bh, [0.008, 0.010, 0.018, 0.88]);
+        painter.rect(bx, by, 2.0, bh, UI_GOLD);
+        self.tx(painter, bx + 14.0, by + 10.0, 14.0, UI_GOLD, "調査");
+        let coord = format!("{col},{row}");
+        let cw = self.tx_w(painter, 11.0, &coord);
+        self.tx(painter, bx + bw - 12.0 - cw, by + 12.0, 11.0, UI_DIM, &coord);
 
-        let mut ly = by + 48.0;
-        for (label, value, color) in &lines {
-            self.tx(painter, bx + 16.0, ly, 13.0, UI_DIM, label);
-            self.tx(painter, bx + 64.0, ly, 13.0, *color, value);
-            ly += 24.0;
+        let mut ly = by + 32.0;
+        for (label, value) in &lines {
+            self.tx(painter, bx + 14.0, ly, 12.0, UI_DIM, label);
+            let shown = self.fit_line(painter, 12.0, value, bw - 78.0);
+            self.tx(painter, bx + 58.0, ly, 12.0, UI_INK, &shown);
+            ly += row_h;
         }
     }
 
-    fn kbd(&self, painter: &mut Painter, x: f32, y: f32, key: &str) -> f32 {
-        let px = 12.0;
-        let tw = self.tx_w(painter, px, key);
-        let w = tw + 14.0;
-        ui_card(painter, x, y, w, 22.0, UI_RAISED, UI_LINE, 1.0);
-        self.tx(painter, x + 7.0, y + 4.0, px, UI_GOLD, key);
-        w
-    }
-
-    fn help_rows(&self, painter: &mut Painter, x: f32, mut y: f32, rows: &[(&str, &str)]) {
+    fn help_column(&self, painter: &mut Painter, x: f32, mut y: f32, rows: &[(&str, &str)]) {
         for (key, val) in rows {
             if key.is_empty() {
                 y += 8.0;
-                self.tx(painter, x, y, 13.0, UI_ACCENT, val);
-                y += 24.0;
+                self.tx(painter, x, y, 12.0, UI_DIM, val);
+                y += 20.0;
             } else {
-                let kw = self.kbd(painter, x, y, key);
-                self.tx(painter, x + kw + 12.0, y + 3.0, 14.0, UI_INK, val);
-                y += 32.0;
+                self.tx(painter, x, y, 14.0, UI_INK, key);
+                self.tx(painter, x + 108.0, y, 14.0, UI_DIM, val);
+                y += 24.0;
             }
         }
     }
 
     pub(crate) fn draw_help_overlay(&self, painter: &mut Painter) {
         let (sw, sh) = screen_px();
-        painter.rect(0.0, 0.0, sw, sh, [0.02, 0.03, 0.05, 0.66]);
-        let bw = 920.0;
-        let bh = 580.0;
-        let bx = (sw - bw) * 0.5;
-        let by = (sh - bh) * 0.5;
-        painter.rect(bx + 6.0, by + 8.0, bw, bh, [0.0, 0.0, 0.0, 0.35]);
-        ui_card(painter, bx, by, bw, bh, UI_PANEL, UI_LINE, 1.0);
-        painter.rect(bx + 1.0, by + 1.0, bw - 2.0, 3.0, UI_ACCENT);
-        self.tx(painter, bx + 28.0, by + 22.0, 26.0, UI_INK, "操作");
-        let cw = self.chip_width(painter, "閉じる", "H");
-        self.chip(
-            painter,
-            bx + bw - 24.0 - cw,
-            by + 22.0,
-            "閉じる",
-            "H",
-            ChipTone::Quiet,
-        );
+        painter.rect(0.0, 0.0, sw, sh, [0.008, 0.010, 0.018, 0.94]);
+        let x = 72.0;
+        let y = 56.0;
+        self.tx(painter, x, y, 36.0, UI_INK, "操作");
+        painter.rect(x, y + 48.0, 52.0, 1.0, UI_GOLD);
+        let close = "H  閉じる";
+        let cw = self.tx_w(painter, 14.0, close);
+        self.tx(painter, sw - 72.0 - cw, y + 12.0, 14.0, UI_DIM, close);
 
         let left: &[(&str, &str)] = &[
             ("", "時間"),
@@ -1687,127 +1481,90 @@ impl Continent {
             ("seed", "同じ世界を開く"),
             ("scenario", "地形の種類"),
         ];
-        self.help_rows(painter, bx + 32.0, by + 76.0, left);
-        self.help_rows(painter, bx + 490.0, by + 76.0, right);
+        self.help_column(painter, x, y + 68.0, left);
+        self.help_column(painter, x + 480.0, y + 68.0, right);
     }
 
     pub(crate) fn draw_title(&self, painter: &mut Painter) {
         let (sw, sh) = screen_px();
         painter.rect(0.0, 0.0, sw, sh, UI_PAGE);
-        let bw = 620.0;
-        let bh = 332.0;
-        let bx = (sw - bw) * 0.5;
-        let by = (sh - bh) * 0.5 - 6.0;
-        painter.rect(bx + 6.0, by + 8.0, bw, bh, [0.0, 0.0, 0.0, 0.28]);
-        ui_card(painter, bx, by, bw, bh, UI_PANEL, UI_LINE, 1.0);
-        painter.rect(bx + 1.0, by + 1.0, bw - 2.0, 3.0, UI_ACCENT);
-
         let cx = sw * 0.5;
-        self.tx_centered(painter, cx, by + 46.0, 13.0, UI_ACCENT, "手続き生成");
-        self.tx_centered(painter, cx, by + 78.0, 36.0, UI_INK, "大陸シミュレーター");
+        let title_px = 64.0;
+        let title_y = sh * 0.34;
+        self.tx_centered(painter, cx, title_y, title_px, UI_INK, "大陸シミュレーター");
+        let rule_w = 88.0;
+        let rule_y = title_y + title_px + 20.0;
+        painter.rect(cx - rule_w * 0.5, rule_y, rule_w, 1.0, UI_GOLD);
         self.tx_centered(
             painter,
             cx,
-            by + 136.0,
+            rule_y + 28.0,
             16.0,
             UI_DIM,
             "文明が岸に根を下ろし、国になっていく",
         );
-
-        let btn_w = 220.0;
-        let btn_h = 46.0;
-        let btn_x = cx - btn_w * 0.5;
-        let btn_y = by + 196.0;
-        let pulse = 0.62 + 0.38 * (self.elapsed_secs * 2.0).sin();
-        let border = [UI_ACCENT[0], UI_ACCENT[1], UI_ACCENT[2], pulse];
-        ui_card(painter, btn_x, btn_y, btn_w, btn_h, UI_BLUE_BG, border, 1.5);
-        self.tx_centered(painter, cx, btn_y + 14.0, 16.0, UI_INK, "はじめる");
-        self.tx_centered(
-            painter,
-            cx,
-            btn_y + 64.0,
-            13.0,
-            UI_DIM,
-            "Space または クリック",
-        );
+        let pulse = 0.70 + 0.30 * (self.elapsed_secs * 1.5).sin();
+        let start = [UI_GOLD[0], UI_GOLD[1], UI_GOLD[2], pulse];
+        self.tx_centered(painter, cx, rule_y + 86.0, 22.0, start, "はじめる");
+        self.tx_centered(painter, cx, rule_y + 118.0, 12.0, UI_DIM, "Space");
     }
 
     pub(crate) fn draw_setup(&self, painter: &mut Painter) {
         let (sw, sh) = screen_px();
         painter.rect(0.0, 0.0, sw, sh, UI_PAGE);
-        let cx = sw * 0.5;
-        self.tx_centered(painter, cx, 32.0, 28.0, UI_INK, "世界を選ぶ");
-        self.tx_centered(
-            painter,
-            cx,
-            72.0,
-            14.0,
-            UI_DIM,
-            "1 から 8、または左右。Space ではじめる",
-        );
+        let x = 64.0;
+        let mut y = 52.0;
+        self.tx(painter, x, y, 40.0, UI_INK, "世界を選ぶ");
+        y += 52.0;
+        painter.rect(x, y, 56.0, 1.0, UI_GOLD);
+        y += 20.0;
+        self.tx(painter, x, y, 13.0, UI_DIM, "1 から 8、または左右。Space ではじめる");
+        y += 36.0;
 
-        let margin = 36.0;
-        let gap = 14.0;
-        let card_w = (sw - margin * 2.0 - gap * 3.0) / 4.0;
-        let card_h = 68.0;
-        let cards_y = 108.0;
         for (i, scenario) in SCENARIOS.iter().enumerate() {
-            let col = (i % 4) as f32;
-            let row = (i / 4) as f32;
-            let x = margin + col * (card_w + gap);
-            let y = cards_y + row * (card_h + 12.0);
             let sel = i == self.setup_scenario_idx;
-            let border = if sel { UI_ACCENT } else { UI_LINE };
-            let fill = if sel { UI_BLUE_BG } else { UI_RAISED };
-            ui_card(
-                painter,
-                x,
-                y,
-                card_w,
-                card_h,
-                fill,
-                border,
-                if sel { 2.0 } else { 1.0 },
-            );
-            self.tx(
-                painter,
-                x + 16.0,
-                y + 12.0,
-                12.0,
-                UI_DIM,
-                &format!("{}", i + 1),
-            );
-            let name_px = if sel { 20.0 } else { 18.0 };
-            let name_c = if sel { UI_INK } else { UI_DIM };
             let name = if self.font.is_some() {
                 scenario.label_jp()
             } else {
                 scenario.label()
             };
-            self.tx(painter, x + 16.0, y + 32.0, name_px, name_c, name);
+            let px = if sel { 20.0 } else { 16.0 };
+            self.tx(painter, x, y + if sel { 3.0 } else { 1.0 }, 12.0, UI_DIM, &format!("{}", i + 1));
+            self.tx(painter, x + 28.0, y, px, if sel { UI_GOLD } else { UI_DIM }, name);
+            y += if sel { 32.0 } else { 26.0 };
         }
-
-        let blurb = SCENARIOS[self.setup_scenario_idx].blurb_jp();
-        let blurb_y = 268.0;
-        let blurb_w = sw - margin * 2.0;
-        ui_card(
-            painter, margin, blurb_y, blurb_w, 52.0, UI_RAISED, UI_LINE, 1.0,
+        y += 10.0;
+        self.tx(
+            painter,
+            x,
+            y,
+            15.0,
+            UI_INK,
+            SCENARIOS[self.setup_scenario_idx].blurb_jp(),
         );
-        self.tx_centered(painter, cx, blurb_y + 16.0, 15.0, UI_INK, blurb);
+        y += 36.0;
 
-        let cell = 5.0;
+        let styles = [ArtStyle::Pixel, ArtStyle::Diorama, ArtStyle::Solid3D];
+        let mut ax = x;
+        for style in styles {
+            let name = if self.font.is_some() {
+                style.label_jp()
+            } else {
+                style.label()
+            };
+            let on = style == self.art_style;
+            self.tx(painter, ax, y, 16.0, if on { UI_GOLD } else { UI_DIM }, name);
+            ax += self.tx_w(painter, 16.0, name) + 22.0;
+        }
+        y += 44.0;
+        self.tx(painter, x, y, 20.0, UI_GOLD, "この世界ではじめる");
+
+        let cell = 4.0;
         let preview_w = COLS as f32 * cell;
         let preview_h = ROWS as f32 * cell;
-        let frame_w = preview_w + 24.0;
-        let frame_h = preview_h + 24.0;
-        let frame_x = cx - frame_w * 0.5;
-        let frame_y = 340.0;
-        ui_card(
-            painter, frame_x, frame_y, frame_w, frame_h, UI_PAGE, UI_LINE, 1.0,
-        );
+        let ox = sw - 56.0 - preview_w;
+        let oy = (sh - preview_h) * 0.5;
         if self.tiles.len() == COLS * ROWS {
-            let ox = frame_x + 12.0;
-            let oy = frame_y + 12.0;
             for row in 0..ROWS {
                 for col in 0..COLS {
                     let c = self.tiles[idx(col, row)].terrain.base_color();
@@ -1821,47 +1578,7 @@ impl Continent {
                 }
             }
         }
-
-        let styles = [ArtStyle::Pixel, ArtStyle::Diorama, ArtStyle::Solid3D];
-        let mut widths = [0.0; 3];
-        let mut chips_w = 0.0;
-        for (i, style) in styles.iter().enumerate() {
-            widths[i] = self.chip_width(painter, style.label_jp(), "");
-            chips_w += widths[i];
-        }
-        chips_w += 8.0 * 2.0;
-        let art_label_w = self.tx_w(painter, 13.0, "画風") + 14.0;
-        let mut ax = cx - (art_label_w + chips_w) * 0.5;
-        let art_y = frame_y + frame_h + 18.0;
-        self.tx(painter, ax, art_y + 7.0, 13.0, UI_DIM, "画風");
-        ax += art_label_w;
-        for (i, style) in styles.iter().enumerate() {
-            let tone = if *style == self.art_style {
-                ChipTone::On
-            } else {
-                ChipTone::Quiet
-            };
-            self.chip(painter, ax, art_y, style.label_jp(), "", tone);
-            ax += widths[i] + 8.0;
-        }
-
-        let btn_w = 240.0;
-        let btn_h = 46.0;
-        let btn_x = cx - btn_w * 0.5;
-        let btn_y = (art_y + 44.0).min(sh - 62.0);
-        let pulse = 0.62 + 0.38 * (self.elapsed_secs * 2.0).sin();
-        let border = [UI_ACCENT[0], UI_ACCENT[1], UI_ACCENT[2], pulse];
-        ui_card(painter, btn_x, btn_y, btn_w, btn_h, UI_BLUE_BG, border, 1.5);
-        self.tx_centered(
-            painter,
-            cx,
-            btn_y + 14.0,
-            16.0,
-            UI_INK,
-            "この世界ではじめる",
-        );
     }
-
 
     // ---- ship positions (render-derived, no sim mutation) ------------------
 
@@ -2132,6 +1849,22 @@ impl Continent {
             .map(|(i, n)| (n.id as i32, i))
             .collect();
 
+        // Seats of real peoples, not every hamlet. A one-tile tribe is not a capital skyline.
+        let mut capitals = std::collections::HashSet::<i32>::new();
+        for nation in &self.nations {
+            let mut best: Option<(i32, f32)> = None;
+            for &si in &nation.territory {
+                let Some(s) = self.settlements.get(si) else { continue };
+                let score = s.pop + if s.city { 100_000.0 } else { 0.0 };
+                if best.map(|(_, p)| score > p).unwrap_or(true) {
+                    best = Some((si as i32, score));
+                }
+            }
+            if let Some((si, _)) = best {
+                capitals.insert(si);
+            }
+        }
+
         let mut trees_placed: usize = 0;
 
         for row in 0..ROWS {
@@ -2298,6 +2031,11 @@ impl Continent {
                 let occ = self.occupied[i];
                 if occ >= 0 && self.overlay != Overlay::Population {
                     let s = &self.settlements[occ as usize];
+                    let major = s.city || (capitals.contains(&occ) && s.pop >= 70.0);
+                    // Hamlets stay as land. Villages are one hut. Cities and great seats cluster.
+                    if !major && s.pop < 45.0 {
+                        continue;
+                    }
                     let nid = self.nation_of.get(occ as usize).copied().unwrap_or(-1);
 
                     // Look up the owning nation's era from its tech bit-count.
@@ -2349,11 +2087,11 @@ impl Continent {
                     let wall_h    = wall_h_base    * size_scale;
                     let roof_rise = roof_rise_base * size_scale;
 
-                    // House count: driven by settlement size, same logic as before.
-                    let house_count: usize = if s.city { 4 }
-                        else if s.pop < 50.0  { 1 }
-                        else if s.pop < 200.0 { 2 }
-                        else { 3 };
+                    let house_count: usize = if major {
+                        if s.pop >= 180.0 { 3 } else { 2 }
+                    } else {
+                        1
+                    };
 
                     // Deterministic jitter: tile-index based, no rng.
                     // Extended jitter table to avoid repetition across many buildings.
@@ -2403,9 +2141,7 @@ impl Continent {
                             house_hw, house_hd, this_roof_rise, roof_color);
                     }
 
-                    // Tower: present for cities always; for large towns in era>=3;
-                    // frequency and height scale with era.
-                    let draw_tower = s.city || (era_idx >= 3 && s.pop >= 200.0);
+                    let draw_tower = major;
                     if draw_tower {
                         // Tower dimensions and colours vary by era.
                         let (tower_hw, tower_h, cap_h, tower_col, cap_col): (f32, f32, f32, Color, Color) =
@@ -2741,23 +2477,12 @@ impl Continent {
             sun_az.sin() * sun_angle.cos(),
         ).normalize();
 
-        const AMBIENT_DAY:   f32 = 0.50;
-        const AMBIENT_NIGHT: f32 = 0.12;
+        const AMBIENT_DAY:   f32 = 0.55;
+        const AMBIENT_NIGHT: f32 = 0.34;
         let ambient = AMBIENT_NIGHT + (AMBIENT_DAY - AMBIENT_NIGHT) * ((sun_elev_t + 1.0) * 0.5);
 
-        let sky_noon:     [f32; 4] = [0.45, 0.65, 0.95, 1.0];
-        let sky_dusk:     [f32; 4] = [0.85, 0.40, 0.25, 1.0];
-        let sky_midnight: [f32; 4] = [0.04, 0.05, 0.16, 1.0];
-        let sky_dawn:     [f32; 4] = [0.80, 0.45, 0.20, 1.0];
-        let sky_color: [f32; 4] = if day_phase < 0.25 {
-            lerp_color(sky_noon, sky_dusk, day_phase / 0.25)
-        } else if day_phase < 0.50 {
-            lerp_color(sky_dusk, sky_midnight, (day_phase - 0.25) / 0.25)
-        } else if day_phase < 0.75 {
-            lerp_color(sky_midnight, sky_dawn, (day_phase - 0.50) / 0.25)
-        } else {
-            lerp_color(sky_dawn, sky_noon, (day_phase - 0.75) / 0.25)
-        };
+        // Clear matches the zenith of the backdrop. No dusk salmon.
+        let sky_color: [f32; 4] = [0.012, 0.016, 0.032, 1.0];
 
         let camera = CameraUniform {
             view_proj,
@@ -2788,6 +2513,7 @@ impl Continent {
         let mut all_indices  = static_i;
         all_vertices.extend_from_slice(&dyn_v);
         all_indices.extend_from_slice(&dyn_i);
+        append_sky_backdrop(&mut all_vertices, &mut all_indices, self.view_azimuth);
 
         let (camera, sky_color) = self.build_camera_and_sky();
 
@@ -2801,6 +2527,51 @@ impl Continent {
 }
 
 // ---- mesh helpers (free functions) -----------------------------------------
+
+/// A tall wall on the far side of the view. Vertex color runs from a warm
+/// horizon up into deep ink, so the clear color is a sky and not a void.
+fn append_sky_backdrop(verts: &mut Vec<Vertex3D>, idxs: &mut Vec<u32>, azimuth: f32) {
+    let sin_az = azimuth.sin();
+    let cos_az = azimuth.cos();
+    let dist = 52.0_f32;
+    let cx = COLS as f32 * 0.5 - sin_az * dist;
+    let cz = ROWS as f32 * 0.5 - cos_az * dist;
+    let rx = cos_az;
+    let rz = -sin_az;
+    let half = 110.0_f32;
+    let bands: [(f32, f32, Color, Color); 3] = [
+        (-6.0, 8.0, [0.46, 0.24, 0.08, 1.0], [0.16, 0.09, 0.04, 1.0]),
+        (8.0, 28.0, [0.16, 0.09, 0.04, 1.0], [0.04, 0.045, 0.07, 1.0]),
+        (28.0, 90.0, [0.04, 0.045, 0.07, 1.0], [0.012, 0.016, 0.032, 1.0]),
+    ];
+    let up = [0.0_f32, 1.0, 0.0];
+    for (y0, y1, c0, c1) in bands {
+        let bl = [cx - rx * half, y0, cz - rz * half];
+        let br = [cx + rx * half, y0, cz + rz * half];
+        let tr = [cx + rx * half, y1, cz + rz * half];
+        let tl = [cx - rx * half, y1, cz - rz * half];
+        let bv = verts.len() as u32;
+        for (pos, color) in [(bl, c0), (br, c0), (tr, c1), (tl, c1)] {
+            verts.push(Vertex3D {
+                position: pos,
+                normal: up,
+                color,
+                uv: [-1.0, -1.0],
+            });
+        }
+        idxs.extend_from_slice(&[bv, bv + 1, bv + 2, bv, bv + 2, bv + 3]);
+        let bv = verts.len() as u32;
+        for (pos, color) in [(bl, c0), (br, c0), (tr, c1), (tl, c1)] {
+            verts.push(Vertex3D {
+                position: pos,
+                normal: up,
+                color,
+                uv: [-1.0, -1.0],
+            });
+        }
+        idxs.extend_from_slice(&[bv, bv + 2, bv + 1, bv, bv + 3, bv + 2]);
+    }
+}
 
 /// Appends a box mesh centred at (`cx`, `cy`, `cz`) with half-extents
 /// (`hx`, `hy`, `hz`) into the shared vertex/index buffers.

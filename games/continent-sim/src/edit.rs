@@ -272,27 +272,28 @@ impl Continent {
         };
     }
 
-    /// Edit-mode card along the bottom of the map. Observe mode draws nothing.
+    /// One line of type along the bottom of the map. Observe mode draws nothing.
     pub(crate) fn draw_intervention_hud(&self, painter: &mut Painter) {
         if self.edit_mode == EditMode::Observe {
             return;
         }
-        let w = MAP_W - 32.0;
-        let h = 44.0;
         let x = MAP_X + 16.0;
-        let y = MAP_Y + MAP_H - h - 14.0;
-        painter.rect(x + 4.0, y + 5.0, w, h, [0.0, 0.0, 0.0, 0.28]);
-        ui_card(painter, x, y, w, h, UI_PANEL, UI_LINE, 1.0);
-        self.tx(painter, x + 16.0, y + 14.0, 13.0, UI_DIM, "信仰");
+        let y = MAP_Y + MAP_H - 28.0;
+        let w = MAP_W - 32.0;
+        painter.rect(x, y - 6.0, w, 26.0, [0.008, 0.010, 0.018, 0.55]);
+        let tool = self.edit_tool.label_jp();
+        self.tx(painter, x, y, 14.0, UI_GOLD, tool);
+        let mut ax = x + self.tx_w(painter, 14.0, tool) + 18.0;
+        self.tx(painter, ax, y, 13.0, UI_DIM, "信仰");
+        ax += self.tx_w(painter, 13.0, "信仰") + 8.0;
         let frac = (self.faith / FAITH_MAX).clamp(0.0, 1.0);
-        let bar_x = x + 56.0;
-        painter.rect(bar_x, y + 19.0, 140.0, 6.0, UI_TRACK);
-        let bar_color = if self.faith < 10.0 { UI_RED } else { UI_ACCENT };
-        painter.rect(bar_x, y + 19.0, 140.0 * frac, 6.0, bar_color);
-        self.tx(painter, bar_x + 148.0, y + 14.0, 13.0, UI_INK, &format!("{:.0}", self.faith));
-        self.tx(painter, x + 250.0, y + 14.0, 14.0, UI_GOLD, self.edit_tool.label_jp());
+        painter.rect(ax, y + 6.0, 72.0, 2.0, UI_TRACK);
+        let bar_color = if self.faith < 10.0 { UI_RED } else { UI_DIM };
+        painter.rect(ax, y + 6.0, 72.0 * frac, 2.0, bar_color);
+        ax += 80.0;
+        self.tx(painter, ax, y, 13.0, UI_DIM, &format!("{:.0}", self.faith));
         let back = "M で観察に戻る";
         let bw = self.tx_w(painter, 13.0, back);
-        self.tx(painter, x + w - 16.0 - bw, y + 14.0, 13.0, UI_DIM, back);
+        self.tx(painter, x + w - bw, y, 13.0, UI_DIM, back);
     }
 }

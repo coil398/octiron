@@ -58,27 +58,23 @@ pub(crate) const MAP_H: f32 = 672.0; // ROWS * TILE
 pub(crate) const MAP_X: f32 = MARGIN;
 pub(crate) const MAP_Y: f32 = MARGIN;
 pub(crate) const PANEL_X: f32 = MAP_X + MAP_W + MARGIN;
-pub(crate) const PANEL_W: f32 = 308.0;
-/// Height of the control dock under the map.
-pub(crate) const CHROME_H: f32 = 72.0;
-pub(crate) const UI_PAGE: Color = [0.055, 0.062, 0.082, 1.0];
-pub(crate) const UI_DOCK: Color = [0.078, 0.086, 0.112, 1.0];
-pub(crate) const UI_PANEL: Color = [0.098, 0.108, 0.140, 1.0];
-pub(crate) const UI_RAISED: Color = [0.130, 0.145, 0.185, 1.0];
-pub(crate) const UI_LINE: Color = [0.26, 0.30, 0.38, 1.0];
-pub(crate) const UI_INK: Color = [0.94, 0.95, 0.97, 1.0];
-pub(crate) const UI_DIM: Color = [0.62, 0.68, 0.78, 1.0];
-pub(crate) const UI_ACCENT: Color = [0.49, 0.74, 0.98, 1.0];
-pub(crate) const UI_GOLD: Color = [0.95, 0.80, 0.42, 1.0];
-pub(crate) const UI_AMBER: Color = [0.93, 0.62, 0.28, 1.0];
-pub(crate) const UI_RED: Color = [0.91, 0.42, 0.34, 1.0];
-pub(crate) const UI_TRACK: Color = [0.16, 0.18, 0.24, 1.0];
-pub(crate) const UI_BLUE_BG: Color = [0.13, 0.26, 0.40, 1.0];
-pub(crate) const UI_WARM_BG: Color = [0.34, 0.26, 0.12, 1.0];
+pub(crate) const PANEL_W: f32 = 176.0;
+/// Thin instrument rail under the map.
+pub(crate) const CHROME_H: f32 = 42.0;
+/// Deep ink. The field, not an admin gray.
+pub(crate) const UI_PAGE: Color = [0.012, 0.015, 0.026, 1.0];
+pub(crate) const UI_DOCK: Color = [0.012, 0.015, 0.026, 0.94];
+pub(crate) const UI_PANEL: Color = [0.012, 0.016, 0.028, 0.86];
+pub(crate) const UI_INK: Color = [0.93, 0.90, 0.84, 1.0];
+pub(crate) const UI_DIM: Color = [0.55, 0.51, 0.44, 1.0];
+/// Molten gold. Year, goal, and the active control only.
+pub(crate) const UI_GOLD: Color = [0.95, 0.74, 0.34, 1.0];
+pub(crate) const UI_RED: Color = [0.72, 0.28, 0.22, 1.0];
+pub(crate) const UI_TRACK: Color = [0.95, 0.74, 0.34, 0.16];
 #[cfg(target_arch = "wasm32")]
-const SCREEN_W: f32 = PANEL_X + PANEL_W + MARGIN; // 1246
+const SCREEN_W: f32 = PANEL_X + PANEL_W + MARGIN; // 1114
 #[cfg(target_arch = "wasm32")]
-const SCREEN_H: f32 = MAP_Y + MAP_H + CHROME_H; // 758
+const SCREEN_H: f32 = MAP_Y + MAP_H + CHROME_H; // 728
 
 // ---- title / setup flow ---------------------------------------------------
 
@@ -1101,7 +1097,7 @@ pub fn start() {
     run_with(
         world,
         Config {
-            clear_color: [0.055, 0.062, 0.082, 1.0],
+            clear_color: [0.012, 0.015, 0.026, 1.0],
             logical_size: Vec2::new(SCREEN_W, SCREEN_H),
         },
     );
