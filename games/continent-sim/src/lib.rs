@@ -58,7 +58,7 @@ pub(crate) const MAP_H: f32 = 672.0; // ROWS * TILE
 pub(crate) const MAP_X: f32 = MARGIN;
 pub(crate) const MAP_Y: f32 = MARGIN;
 pub(crate) const PANEL_X: f32 = MAP_X + MAP_W + MARGIN;
-pub(crate) const PANEL_W: f32 = 176.0;
+pub(crate) const PANEL_W: f32 = 308.0;
 /// Thin instrument rail under the map.
 pub(crate) const CHROME_H: f32 = 42.0;
 /// Deep ink. The field, not an admin gray.
@@ -72,7 +72,7 @@ pub(crate) const UI_GOLD: Color = [0.95, 0.74, 0.34, 1.0];
 pub(crate) const UI_RED: Color = [0.72, 0.28, 0.22, 1.0];
 pub(crate) const UI_TRACK: Color = [0.95, 0.74, 0.34, 0.16];
 #[cfg(target_arch = "wasm32")]
-const SCREEN_W: f32 = PANEL_X + PANEL_W + MARGIN; // 1114
+const SCREEN_W: f32 = PANEL_X + PANEL_W + MARGIN; // 1246
 #[cfg(target_arch = "wasm32")]
 const SCREEN_H: f32 = MAP_Y + MAP_H + CHROME_H; // 728
 
@@ -536,6 +536,9 @@ impl Game for Continent {
 
         // ---- Title phase: wait for SPACE or click ---------------------------
         if self.phase == Phase::Title {
+            if self.scene_dirty {
+                self.rebuild_static_mesh();
+            }
             if input.is_key_pressed(Key::Space)
                 || input.is_mouse_pressed(MouseButton::Left)
             {
@@ -981,7 +984,7 @@ impl Game for Continent {
     }
 
     fn scene_3d(&self) -> Option<Scene3D> {
-        if self.art_style == ArtStyle::Solid3D {
+        if self.phase == Phase::Title || self.art_style == ArtStyle::Solid3D {
             Some(self.build_scene_3d_cached())
         } else {
             None

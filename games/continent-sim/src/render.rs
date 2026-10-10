@@ -343,6 +343,9 @@ impl Continent {
     /// Returns a list of `(tile_a, tile_b)` pairs, deduplicated (A<B index
     /// order) and capped at `MAX_ROAD_SEGMENTS`.  Pure geometry from current
     /// state — no RNG, no sim mutation.
+    /// Geometry for the trade web. It is not drawn: a full set of chords
+    /// reads as a burst of spikes, not as roads.
+    #[allow(dead_code)]
     pub(crate) fn road_segments(&self) -> Vec<(usize, usize)> {
         const MAX_ROAD_DIST: i32 = 6; // Chebyshev distance cap (≈3× COHESION_DIST)
         const MAX_ROAD_SEGMENTS: usize = 256;
@@ -467,6 +470,23 @@ impl Continent {
 
     // ---- draw methods -------------------------------------------------------
 
+    /// Solid biome color. Elevation lifts the light so land reads as relief,
+    /// not as a noisy tile sheet.
+    fn shaded_land(terrain: Terrain, elevation: f32) -> Color {
+        let base = terrain.base_color();
+        let e = elevation.clamp(0.0, 1.0);
+        let light = match terrain {
+            Terrain::DeepOcean => 0.62 + 0.28 * e,
+            Terrain::Ocean => 0.78 + 0.30 * e,
+            Terrain::River => 0.92 + 0.16 * e,
+            Terrain::Mountain => 0.70 + 0.62 * e,
+            Terrain::Desert => 0.88 + 0.22 * e,
+            Terrain::Forest => 0.78 + 0.36 * e,
+            _ => 0.80 + 0.40 * e,
+        };
+        [base[0] * light, base[1] * light, base[2] * light, 1.0]
+    }
+
     pub(crate) fn draw_map(&self, painter: &mut Painter) {
         let zoom = self.view_zoom;
         let pan = self.view_pan;
@@ -494,22 +514,32 @@ impl Continent {
                 } else {
                     [shade, shade, shade, 1.0]
                 };
-                let (atlas, src) = self.map_sprite(col, row, tile.terrain);
-                match (atlas, src) {
-                    (Some(atlas), Some(src)) => {
-                        painter.sprite_region(atlas, Rect::new(x, y, size, size), src, tint);
+                if self.art_style == ArtStyle::Pixel {
+                    let mut color = Self::shaded_land(tile.terrain, tile.elevation);
+                    if dim {
+                        color = [color[0] * 0.55, color[1] * 0.55, color[2] * 0.55, 1.0];
                     }
-                    _ => {
-                        let mut color = tile.terrain.base_color();
-                        if tile.terrain == Terrain::Mountain {
-                            let t = ((tile.elevation - MOUNTAIN_LEVEL) / (1.0 - MOUNTAIN_LEVEL))
-                                .clamp(0.0, 1.0);
-                            color = lerp_color(color, [0.92, 0.93, 0.96, 1.0], t * 0.7);
+                    painter.rect(x, y, size, size, color);
+                    if !dim && tile.terrain == Terrain::Forest {
+                        let leaf = [0.10, 0.32, 0.14, 1.0];
+                        painter.rect(x + size * 0.22, y + size * 0.18, size * 0.28, size * 0.34, leaf);
+                        painter.rect(x + size * 0.52, y + size * 0.40, size * 0.24, size * 0.30, [0.14, 0.40, 0.18, 1.0]);
+                    } else if !dim && tile.terrain == Terrain::Mountain && tile.elevation > 0.72 {
+                        painter.rect(x + 1.0, y + 1.0, size - 2.0, size * 0.34, [0.90, 0.91, 0.93, 1.0]);
+                    }
+                } else {
+                    let (atlas, src) = self.map_sprite(col, row, tile.terrain);
+                    match (atlas, src) {
+                        (Some(atlas), Some(src)) => {
+                            painter.sprite_region(atlas, Rect::new(x, y, size, size), src, tint);
                         }
-                        if dim {
-                            color = [color[0] * 0.5, color[1] * 0.5, color[2] * 0.5, 1.0];
+                        _ => {
+                            let mut color = Self::shaded_land(tile.terrain, tile.elevation);
+                            if dim {
+                                color = [color[0] * 0.5, color[1] * 0.5, color[2] * 0.5, 1.0];
+                            }
+                            painter.rect(x, y, size, size, color);
                         }
-                        painter.rect(x, y, size, size, color);
                     }
                 }
 
@@ -569,141 +599,45 @@ impl Continent {
             }
         }
 
-        // Realm outline: only the edge that faces another people, or the wild.
-        if self.overlay != Overlay::Carrying && self.overlay != Overlay::Resource {
-            let mut owner = vec![-1i32; self.tiles.len()];
-            let mut tint: Vec<Color> = vec![[0.0, 0.0, 0.0, 0.0]; self.tiles.len()];
-            for nation in &self.nations {
-                let border = [nation.color[0], nation.color[1], nation.color[2], 0.92];
-                for &si in &nation.territory {
-                    let Some(s) = self.settlements.get(si) else { continue };
-                    if s.tile < owner.len() {
-                        owner[s.tile] = nation.id as i32;
-                        tint[s.tile] = border;
-                    }
-                }
-            }
-            let edges: [(i32, i32); 4] = [(0, -1), (0, 1), (-1, 0), (1, 0)];
-            for tile_idx in 0..owner.len() {
-                let id = owner[tile_idx];
-                if id < 0 {
-                    continue;
-                }
-                let col = tile_idx % COLS;
-                let row = tile_idx / COLS;
-                let (x, y, size) = view_tile(col, row, pan, zoom);
-                if x + size <= MAP_X || x >= map_right || y + size <= MAP_Y || y >= map_bottom {
-                    continue;
-                }
-                let border = tint[tile_idx];
-                let b = 1.5;
-                for (k, (dc, dr)) in edges.iter().enumerate() {
-                    let nc = col as i32 + dc;
-                    let nr = row as i32 + dr;
-                    let foreign = if nc < 0 || nr < 0 || nc >= COLS as i32 || nr >= ROWS as i32 {
-                        true
-                    } else {
-                        owner[idx(nc as usize, nr as usize)] != id
-                    };
-                    if !foreign {
+        // A pale shore where water meets land, so the coast reads.
+        if self.art_style == ArtStyle::Pixel && self.overlay == Overlay::Terrain {
+            let shore = [0.78, 0.72, 0.50, 1.0];
+            let band = (TILE * zoom * 0.22).max(2.0);
+            for row in 0..ROWS {
+                for col in 0..COLS {
+                    let t = self.tiles[idx(col, row)].terrain;
+                    if t != Terrain::Ocean && t != Terrain::DeepOcean {
                         continue;
                     }
-                    match k {
-                        0 => painter.rect(x, y, size, b, border),
-                        1 => painter.rect(x, y + size - b, size, b, border),
-                        2 => painter.rect(x, y, b, size, border),
-                        _ => painter.rect(x + size - b, y, b, size, border),
+                    let (x, y, size) = view_tile(col, row, pan, zoom);
+                    if x + size <= MAP_X || x >= map_right || y + size <= MAP_Y || y >= map_bottom {
+                        continue;
+                    }
+                    let land_at = |dc: i32, dr: i32| {
+                        let nc = col as i32 + dc;
+                        let nr = row as i32 + dr;
+                        if nc < 0 || nr < 0 || nc >= COLS as i32 || nr >= ROWS as i32 {
+                            return false;
+                        }
+                        !self.tiles[idx(nc as usize, nr as usize)].terrain.is_water()
+                    };
+                    if land_at(0, -1) {
+                        painter.rect(x, y, size, band, shore);
+                    }
+                    if land_at(0, 1) {
+                        painter.rect(x, y + size - band, size, band, shore);
+                    }
+                    if land_at(-1, 0) {
+                        painter.rect(x, y, band, size, shore);
+                    }
+                    if land_at(1, 0) {
+                        painter.rect(x + size - band, y, band, size, shore);
                     }
                 }
             }
         }
 
         self.draw_wildlife(painter, pan, zoom, map_right, map_bottom);
-
-        // ---- farmland overlay (drawn AFTER base tiles, BEFORE roads/markers) ----
-        // For each Plains tile near a settlement (Chebyshev 1..=2), draw a
-        // subtle stage-colored tint and two horizontal crop stripes.  Pure
-        // render-derived — no sim state mutation.
-        if self.overlay == Overlay::Terrain || self.overlay == Overlay::Resource {
-            for row in 0..ROWS {
-                for col in 0..COLS {
-                    let i = idx(col, row);
-                    let Some(stage) = self.farmland_stage(i) else {
-                        continue;
-                    };
-                    let (x, y, size) = view_tile(col, row, pan, zoom);
-                    if x + size <= MAP_X || x >= map_right || y + size <= MAP_Y || y >= map_bottom {
-                        continue;
-                    }
-                    // Stage-colored tint over the base tile.
-                    let tint = Self::farmland_stage_color(stage);
-                    painter.rect(x, y, size, size, tint);
-                    // Two horizontal crop stripes (darker, semi-transparent).
-                    let stripe_h = (size * 0.10).max(1.0);
-                    let stripe_alpha = 0.25_f32;
-                    let stripe_col: Color = [
-                        tint[0] * 0.65,
-                        tint[1] * 0.65,
-                        tint[2] * 0.65,
-                        stripe_alpha,
-                    ];
-                    // Stripe at ~30% and ~65% from the top of the tile.
-                    painter.rect(x, y + size * 0.28, size, stripe_h, stripe_col);
-                    painter.rect(x, y + size * 0.62, size, stripe_h, stripe_col);
-                }
-            }
-        }
-
-        // ---- road / trade-route segments (drawn BEFORE settlement markers) ----
-        // Brown/tan line segments between same-nation settlements within range.
-        // Rendered as a DDA-traced sequence of small square dots so lines appear
-        // at any angle without requiring rotate-rect support in the Painter.
-        {
-            const ROAD_COLOR: Color = [0.55, 0.38, 0.18, 0.55]; // brown/tan, semi-transparent
-            let road_dot = (TILE * zoom * 0.22).max(1.5); // dot size scales with zoom
-            let road_half = road_dot * 0.5;
-
-            for (tile_a, tile_b) in self.road_segments() {
-                let col_a = tile_a % COLS;
-                let row_a = tile_a / COLS;
-                let col_b = tile_b % COLS;
-                let row_b = tile_b / COLS;
-                let (tx_a, ty_a, tsize_a) = view_tile(col_a, row_a, pan, zoom);
-                let (tx_b, ty_b, tsize_b) = view_tile(col_b, row_b, pan, zoom);
-                let ax = tx_a + tsize_a * 0.5;
-                let ay = ty_a + tsize_a * 0.5;
-                let bx = tx_b + tsize_b * 0.5;
-                let by = ty_b + tsize_b * 0.5;
-
-                // Skip entirely off-screen segments (loose bound check).
-                let min_x = ax.min(bx);
-                let max_x = ax.max(bx);
-                let min_y = ay.min(by);
-                let max_y = ay.max(by);
-                if max_x < MAP_X || min_x > map_right || max_y < MAP_Y || min_y > map_bottom {
-                    continue;
-                }
-
-                // DDA: step along the longer axis, plot dots every ~1/3 tile.
-                let dx = bx - ax;
-                let dy = by - ay;
-                let dist = (dx * dx + dy * dy).sqrt().max(1.0);
-                let dot_spacing = (TILE * zoom * 0.30).max(2.0);
-                let steps = (dist / dot_spacing).ceil() as u32;
-                for s in 0..=steps {
-                    let t = s as f32 / steps.max(1) as f32;
-                    let px = ax + dx * t;
-                    let py = ay + dy * t;
-                    // Clip individual dots to map viewport.
-                    if px + road_half < MAP_X || px - road_half > map_right
-                        || py + road_half < MAP_Y || py - road_half > map_bottom
-                    {
-                        continue;
-                    }
-                    painter.rect(px - road_half, py - road_half, road_dot, road_dot, ROAD_COLOR);
-                }
-            }
-        }
 
         // ---- ships (2D: Pixel + Diorama) ----------------------------------------
         // Small boat markers on the water under the view transform.
@@ -769,16 +703,14 @@ impl Continent {
                 } else {
                     [0.93, 0.90, 0.84, 0.55]
                 };
-                // One beacon per people. A mark on every town reads as a carpet of letters.
-                if capital[si] && (s.city || s.pop >= 30.0) {
-                    let d = if s.city { 5.0 } else { 3.5 };
-                    painter.rect(
-                        tx + (tsize - d) * 0.5,
-                        ty + (tsize - d) * 0.5,
-                        d,
-                        d,
-                        mark,
-                    );
+                // A small roof, not a letter and not a line bursting out of the town.
+                if s.city || capital[si] {
+                    let wall = [mark[0] * 0.72, mark[1] * 0.72, mark[2] * 0.72, 0.95];
+                    painter.rect(tx + tsize * 0.22, ty + tsize * 0.42, tsize * 0.56, tsize * 0.36, wall);
+                    painter.rect(tx + tsize * 0.14, ty + tsize * 0.22, tsize * 0.72, tsize * 0.24, mark);
+                } else if s.pop >= 45.0 {
+                    let d = 2.5;
+                    painter.rect(tx + (tsize - d) * 0.5, ty + (tsize - d) * 0.5, d, d, mark);
                 }
             }
         }
@@ -937,6 +869,15 @@ impl Continent {
     ) {
         let w = self.tx_w(painter, px, text);
         self.tx(painter, cx - w * 0.5, y, px, color, text);
+    }
+
+    /// Shrink the size until the whole string fits. Never clip the words.
+    fn px_to_fit(&self, painter: &mut Painter, px: f32, text: &str, max_w: f32) -> f32 {
+        let mut size = px;
+        while size > 8.0 && self.tx_w(painter, size, text) > max_w {
+            size -= 0.5;
+        }
+        size
     }
 
     fn fit_line(&self, painter: &mut Painter, px: f32, text: &str, max_w: f32) -> String {
@@ -1196,32 +1137,34 @@ impl Continent {
 
         self.tx(painter, x, y, 11.0, UI_DIM, "年代記");
         y += 16.0;
-        let list_bot = MAP_Y + MAP_H - 12.0;
-        let row_h = 16.0;
+        let list_bot = MAP_Y + MAP_H - 10.0;
+        let row_h = 18.0;
         let slots = ((list_bot - y) / row_h).floor().max(0.0) as usize;
         if self.log.is_empty() {
-            self.tx(painter, x, y, 12.0, UI_DIM, "まだ記録はない");
+            self.tx(painter, x, y, 13.0, UI_DIM, "まだ記録はない");
         } else if slots > 0 {
             let start = self.log.len().saturating_sub(slots);
-            let shown = self.log.len() - start;
+            let shown_n = self.log.len() - start;
+            let year_col = 36.0;
             painter.rect(
-                x + 26.0,
+                x + year_col - 8.0,
                 y + 2.0,
                 1.0,
-                (shown as f32 * row_h - 6.0).max(1.0),
+                (shown_n as f32 * row_h - 6.0).max(1.0),
                 [UI_DIM[0], UI_DIM[1], UI_DIM[2], 0.28],
             );
             for (i, line) in self.log.iter().skip(start).enumerate() {
                 let ly = y + i as f32 * row_h;
                 let (year, body) = chronicle_parts(line);
                 if year.is_empty() {
-                    let shown = self.fit_line(painter, 12.0, &body, inner_w);
-                    self.tx(painter, x, ly, 12.0, UI_INK, &shown);
+                    let px = self.px_to_fit(painter, 13.0, &body, inner_w);
+                    self.tx(painter, x, ly, px, UI_INK, &body);
                 } else {
-                    let yw = self.tx_w(painter, 11.0, &year);
-                    self.tx(painter, x + 20.0 - yw, ly + 1.0, 11.0, UI_DIM, &year);
-                    let shown = self.fit_line(painter, 12.0, &body, inner_w - 32.0);
-                    self.tx(painter, x + 32.0, ly, 12.0, UI_INK, &shown);
+                    let yw = self.tx_w(painter, 12.0, &year);
+                    self.tx(painter, x + year_col - 12.0 - yw, ly + 1.0, 12.0, UI_DIM, &year);
+                    let body_w = (inner_w - year_col).max(40.0);
+                    let px = self.px_to_fit(painter, 13.0, &body, body_w);
+                    self.tx(painter, x + year_col, ly, px, UI_INK, &body);
                 }
             }
         }
@@ -1486,26 +1429,28 @@ impl Continent {
 
     pub(crate) fn draw_title(&self, painter: &mut Painter) {
         let (sw, sh) = screen_px();
-        painter.rect(0.0, 0.0, sw, sh, UI_PAGE);
+        // The world is already on the screen. A soft wash keeps the words readable.
+        painter.rect(0.0, 0.0, sw, sh * 0.16, [0.008, 0.010, 0.020, 0.45]);
+        painter.rect(0.0, sh * 0.18, sw, 168.0, [0.008, 0.010, 0.020, 0.42]);
         let cx = sw * 0.5;
-        let title_px = 64.0;
-        let title_y = sh * 0.34;
+        let title_px = 58.0;
+        let title_y = sh * 0.20;
         self.tx_centered(painter, cx, title_y, title_px, UI_INK, "大陸シミュレーター");
-        let rule_w = 88.0;
-        let rule_y = title_y + title_px + 20.0;
+        let rule_w = 96.0;
+        let rule_y = title_y + title_px + 14.0;
         painter.rect(cx - rule_w * 0.5, rule_y, rule_w, 1.0, UI_GOLD);
         self.tx_centered(
             painter,
             cx,
-            rule_y + 28.0,
+            rule_y + 16.0,
             16.0,
             UI_DIM,
             "文明が岸に根を下ろし、国になっていく",
         );
         let pulse = 0.70 + 0.30 * (self.elapsed_secs * 1.5).sin();
         let start = [UI_GOLD[0], UI_GOLD[1], UI_GOLD[2], pulse];
-        self.tx_centered(painter, cx, rule_y + 86.0, 22.0, start, "はじめる");
-        self.tx_centered(painter, cx, rule_y + 118.0, 12.0, UI_DIM, "Space");
+        self.tx_centered(painter, cx, rule_y + 52.0, 22.0, start, "はじめる");
+        self.tx_centered(painter, cx, rule_y + 82.0, 12.0, UI_DIM, "Space");
     }
 
     pub(crate) fn draw_setup(&self, painter: &mut Painter) {
@@ -2030,9 +1975,9 @@ impl Continent {
                 let occ = self.occupied[i];
                 if occ >= 0 && self.overlay != Overlay::Population {
                     let s = &self.settlements[occ as usize];
-                    // One cluster per people, on the seat. The rest of the land stays land.
-                    let seat = capitals.contains(&occ) && (s.city || s.pop >= 30.0);
-                    if !seat {
+                    // Roofs and a tower. Hamlets stay as land so the map is not a carpet.
+                    let seat = capitals.contains(&occ);
+                    if !s.city && !seat {
                         continue;
                     }
                     let nid = self.nation_of.get(occ as usize).copied().unwrap_or(-1);
@@ -2086,7 +2031,11 @@ impl Continent {
                     let wall_h    = wall_h_base    * size_scale;
                     let roof_rise = roof_rise_base * size_scale;
 
-                    let house_count: usize = if s.pop >= 120.0 { 3 } else { 2 };
+                    let house_count: usize = if seat {
+                        if s.pop >= 120.0 { 3 } else { 2 }
+                    } else {
+                        1
+                    };
 
                     // Deterministic jitter: tile-index based, no rng.
                     // Extended jitter table to avoid repetition across many buildings.
@@ -2136,7 +2085,7 @@ impl Continent {
                             house_hw, house_hd, this_roof_rise, roof_color);
                     }
 
-                    let draw_tower = true;
+                    let draw_tower = seat;
                     if draw_tower {
                         // Tower dimensions and colours vary by era.
                         let (tower_hw, tower_h, cap_h, tower_col, cap_col): (f32, f32, f32, Color, Color) =
@@ -2195,46 +2144,6 @@ impl Continent {
                         }
                     }
                 }
-            }
-        }
-
-        // Road ribbons.
-        {
-            const ROAD_COLOR_3D: Color = [0.42, 0.27, 0.12, 1.0];
-            const ROAD_HALF_WIDTH: f32 = 0.12;
-            const ROAD_Y_BIAS: f32 = 0.015;
-            for (tile_a, tile_b) in self.road_segments() {
-                let col_a = tile_a % COLS;
-                let row_a = tile_a / COLS;
-                let col_b = tile_b % COLS;
-                let row_b = tile_b / COLS;
-                let ax = col_a as f32 + 0.5;
-                let az = row_a as f32 + 0.5;
-                let bx = col_b as f32 + 0.5;
-                let bz = row_b as f32 + 0.5;
-                let elev_a = Self::terrain_elevation_3d(self.tiles[tile_a].terrain) * height_scale;
-                let elev_b = Self::terrain_elevation_3d(self.tiles[tile_b].terrain) * height_scale;
-                let road_y = elev_a.max(elev_b) + ROAD_Y_BIAS;
-                let dx = bx - ax;
-                let dz = bz - az;
-                let len = (dx * dx + dz * dz).sqrt().max(1e-4);
-                let px = (-dz / len) * ROAD_HALF_WIDTH;
-                let pz = ( dx / len) * ROAD_HALF_WIDTH;
-                let v0 = [ax - px, road_y, az - pz];
-                let v1 = [ax + px, road_y, az + pz];
-                let v2 = [bx + px, road_y, bz + pz];
-                let v3 = [bx - px, road_y, bz - pz];
-                let normal = [0.0_f32, 1.0, 0.0];
-                let bv = verts.len() as u32;
-                for pos in &[v0, v1, v2, v3] {
-                    verts.push(Vertex3D {
-                        position: *pos,
-                        normal,
-                        color: ROAD_COLOR_3D,
-                        uv: [-1.0, -1.0],
-                    });
-                }
-                idxs.extend_from_slice(&[bv, bv+1, bv+2, bv, bv+2, bv+3]);
             }
         }
 
@@ -2477,7 +2386,7 @@ impl Continent {
         let ambient = AMBIENT_NIGHT + (AMBIENT_DAY - AMBIENT_NIGHT) * ((sun_elev_t + 1.0) * 0.5);
 
         // Clear matches the zenith of the backdrop. No dusk salmon.
-        let sky_color: [f32; 4] = [0.012, 0.016, 0.032, 1.0];
+        let sky_color: [f32; 4] = [0.012, 0.018, 0.042, 1.0];
 
         let camera = CameraUniform {
             view_proj,
@@ -2560,15 +2469,16 @@ fn append_sky_backdrop(
     // Just past the ortho frame, so the top of the picture is the zenith.
     let hw = COLS as f32 * 0.50 / zoom * 1.45;
     let hh = ROWS as f32 * 0.50 / zoom * 1.45;
-    let horizon: Color = [0.70, 0.36, 0.12, 1.0];
-    let glow: Color = [0.20, 0.10, 0.045, 1.0];
-    let zenith: Color = [0.010, 0.014, 0.028, 1.0];
+    // Deep blue lifting toward a thin warm edge. Not a flat brown field.
+    let horizon: Color = [0.38, 0.24, 0.12, 1.0];
+    let dusk: Color = [0.11, 0.16, 0.30, 1.0];
+    let lift: Color = [0.035, 0.055, 0.12, 1.0];
+    let zenith: Color = [0.012, 0.018, 0.042, 1.0];
     let light_n = [0.0_f32, 1.0, 0.0];
-    // The open sky (upper frame) is ink. Warmth is only the low horizon.
     let bands: [(f32, f32, Color, Color); 3] = [
-        (-hh, -hh * 0.72, horizon, glow),
-        (-hh * 0.72, -hh * 0.28, glow, zenith),
-        (-hh * 0.28, hh, zenith, zenith),
+        (-hh, -hh * 0.84, horizon, dusk),
+        (-hh * 0.84, -hh * 0.05, dusk, lift),
+        (-hh * 0.05, hh, lift, zenith),
     ];
     for (y0, y1, c0, c1) in bands {
         let bl = center - right * hw + up * y0;
