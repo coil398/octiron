@@ -769,17 +769,16 @@ impl Continent {
                 } else {
                     [0.93, 0.90, 0.84, 0.55]
                 };
-                let major = s.city || (capital[si] && s.pop >= 60.0);
-                if major {
-                    let h = if s.city { 9.0 } else { 6.0 };
-                    let w = 2.0;
-                    let bx = tx + (tsize - w) * 0.5;
-                    let by = ty + (tsize - h) * 0.5;
-                    painter.rect(bx, by + 2.0, w, (h - 2.0).max(2.0), mark);
-                    painter.rect(bx - 1.0, by, w + 2.0, 2.0, mark);
-                } else if s.pop >= 22.0 {
-                    let d = if s.city { 3.0 } else { 2.0 };
-                    painter.rect(tx + (tsize - d) * 0.5, ty + (tsize - d) * 0.5, d, d, mark);
+                // One beacon per people. A mark on every town reads as a carpet of letters.
+                if capital[si] && (s.city || s.pop >= 30.0) {
+                    let d = if s.city { 5.0 } else { 3.5 };
+                    painter.rect(
+                        tx + (tsize - d) * 0.5,
+                        ty + (tsize - d) * 0.5,
+                        d,
+                        d,
+                        mark,
+                    );
                 }
             }
         }
@@ -2031,9 +2030,9 @@ impl Continent {
                 let occ = self.occupied[i];
                 if occ >= 0 && self.overlay != Overlay::Population {
                     let s = &self.settlements[occ as usize];
-                    let major = s.city || (capitals.contains(&occ) && s.pop >= 70.0);
-                    // Hamlets stay as land. Villages are one hut. Cities and great seats cluster.
-                    if !major && s.pop < 45.0 {
+                    // One cluster per people, on the seat. The rest of the land stays land.
+                    let seat = capitals.contains(&occ) && (s.city || s.pop >= 30.0);
+                    if !seat {
                         continue;
                     }
                     let nid = self.nation_of.get(occ as usize).copied().unwrap_or(-1);
@@ -2087,11 +2086,7 @@ impl Continent {
                     let wall_h    = wall_h_base    * size_scale;
                     let roof_rise = roof_rise_base * size_scale;
 
-                    let house_count: usize = if major {
-                        if s.pop >= 180.0 { 3 } else { 2 }
-                    } else {
-                        1
-                    };
+                    let house_count: usize = if s.pop >= 120.0 { 3 } else { 2 };
 
                     // Deterministic jitter: tile-index based, no rng.
                     // Extended jitter table to avoid repetition across many buildings.
@@ -2141,7 +2136,7 @@ impl Continent {
                             house_hw, house_hd, this_roof_rise, roof_color);
                     }
 
-                    let draw_tower = major;
+                    let draw_tower = true;
                     if draw_tower {
                         // Tower dimensions and colours vary by era.
                         let (tower_hw, tower_h, cap_h, tower_col, cap_col): (f32, f32, f32, Color, Color) =
@@ -2513,7 +2508,15 @@ impl Continent {
         let mut all_indices  = static_i;
         all_vertices.extend_from_slice(&dyn_v);
         all_indices.extend_from_slice(&dyn_i);
-        append_sky_backdrop(&mut all_vertices, &mut all_indices, self.view_azimuth);
+        append_sky_backdrop(
+            &mut all_vertices,
+            &mut all_indices,
+            self.view_azimuth,
+            self.view_elevation,
+            self.view_zoom,
+            self.view_pan.x,
+            self.view_pan.y,
+        );
 
         let (camera, sky_color) = self.build_camera_and_sky();
 
@@ -2528,48 +2531,66 @@ impl Continent {
 
 // ---- mesh helpers (free functions) -----------------------------------------
 
-/// A tall wall on the far side of the view. Vertex color runs from a warm
-/// horizon up into deep ink, so the clear color is a sky and not a void.
-fn append_sky_backdrop(verts: &mut Vec<Vertex3D>, idxs: &mut Vec<u32>, azimuth: f32) {
+/// A camera-facing sheet behind the world. Color runs from a molten horizon
+/// up into deep ink, so the corners of the view are a sky.
+fn append_sky_backdrop(
+    verts: &mut Vec<Vertex3D>,
+    idxs: &mut Vec<u32>,
+    azimuth: f32,
+    elevation: f32,
+    zoom: f32,
+    pan_x: f32,
+    pan_y: f32,
+) {
+    let sin_el = elevation.sin();
+    let cos_el = elevation.cos();
     let sin_az = azimuth.sin();
     let cos_az = azimuth.cos();
-    let dist = 52.0_f32;
-    let cx = COLS as f32 * 0.5 - sin_az * dist;
-    let cz = ROWS as f32 * 0.5 - cos_az * dist;
-    let rx = cos_az;
-    let rz = -sin_az;
-    let half = 110.0_f32;
+    let forward = Vec3::new(-cos_el * sin_az, -sin_el, -cos_el * cos_az).normalize();
+    let right = forward.cross(Vec3::Y);
+    let right = if right.length_squared() < 1e-8 {
+        Vec3::X
+    } else {
+        right.normalize()
+    };
+    let up = right.cross(forward).normalize();
+    let target = Vec3::new(COLS as f32 * 0.5 + pan_x, 2.0, ROWS as f32 * 0.5 + pan_y);
+    let center = target + forward * 36.0;
+    let zoom = zoom.max(0.25);
+    // Just past the ortho frame, so the top of the picture is the zenith.
+    let hw = COLS as f32 * 0.50 / zoom * 1.45;
+    let hh = ROWS as f32 * 0.50 / zoom * 1.45;
+    let horizon: Color = [0.70, 0.36, 0.12, 1.0];
+    let glow: Color = [0.20, 0.10, 0.045, 1.0];
+    let zenith: Color = [0.010, 0.014, 0.028, 1.0];
+    let light_n = [0.0_f32, 1.0, 0.0];
+    // The open sky (upper frame) is ink. Warmth is only the low horizon.
     let bands: [(f32, f32, Color, Color); 3] = [
-        (-6.0, 8.0, [0.46, 0.24, 0.08, 1.0], [0.16, 0.09, 0.04, 1.0]),
-        (8.0, 28.0, [0.16, 0.09, 0.04, 1.0], [0.04, 0.045, 0.07, 1.0]),
-        (28.0, 90.0, [0.04, 0.045, 0.07, 1.0], [0.012, 0.016, 0.032, 1.0]),
+        (-hh, -hh * 0.72, horizon, glow),
+        (-hh * 0.72, -hh * 0.28, glow, zenith),
+        (-hh * 0.28, hh, zenith, zenith),
     ];
-    let up = [0.0_f32, 1.0, 0.0];
     for (y0, y1, c0, c1) in bands {
-        let bl = [cx - rx * half, y0, cz - rz * half];
-        let br = [cx + rx * half, y0, cz + rz * half];
-        let tr = [cx + rx * half, y1, cz + rz * half];
-        let tl = [cx - rx * half, y1, cz - rz * half];
-        let bv = verts.len() as u32;
-        for (pos, color) in [(bl, c0), (br, c0), (tr, c1), (tl, c1)] {
-            verts.push(Vertex3D {
-                position: pos,
-                normal: up,
-                color,
-                uv: [-1.0, -1.0],
-            });
+        let bl = center - right * hw + up * y0;
+        let br = center + right * hw + up * y0;
+        let tr = center + right * hw + up * y1;
+        let tl = center - right * hw + up * y1;
+        for winding in [0, 1] {
+            let bv = verts.len() as u32;
+            for (pos, color) in [(bl, c0), (br, c0), (tr, c1), (tl, c1)] {
+                verts.push(Vertex3D {
+                    position: pos.to_array(),
+                    normal: light_n,
+                    color,
+                    uv: [-1.0, -1.0],
+                });
+            }
+            if winding == 0 {
+                idxs.extend_from_slice(&[bv, bv + 1, bv + 2, bv, bv + 2, bv + 3]);
+            } else {
+                idxs.extend_from_slice(&[bv, bv + 2, bv + 1, bv, bv + 3, bv + 2]);
+            }
         }
-        idxs.extend_from_slice(&[bv, bv + 1, bv + 2, bv, bv + 2, bv + 3]);
-        let bv = verts.len() as u32;
-        for (pos, color) in [(bl, c0), (br, c0), (tr, c1), (tl, c1)] {
-            verts.push(Vertex3D {
-                position: pos,
-                normal: up,
-                color,
-                uv: [-1.0, -1.0],
-            });
-        }
-        idxs.extend_from_slice(&[bv, bv + 2, bv + 1, bv, bv + 3, bv + 2]);
     }
 }
 
