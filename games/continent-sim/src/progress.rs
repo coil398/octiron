@@ -13,6 +13,7 @@ pub(crate) enum Era {
 }
 
 impl Era {
+    #[allow(dead_code)]
     pub(crate) fn label(self) -> &'static str {
         match self {
             Era::Stone     => "Stone Age",
@@ -59,15 +60,16 @@ impl Era {
 
 // ---- traits display -------------------------------------------------------
 
-/// Returns a short string listing earned traits (e.g. "F M - - - D").
+/// Earned traits as readable words, joined with a middle dot.
 pub(crate) fn traits_display(traits: u32) -> String {
-    let f = if traits & TRAIT_FLOOD_RESILIENCE != 0 { "F" } else { "-" };
-    let m = if traits & TRAIT_MASONRY != 0 { "M" } else { "-" };
-    let c = if traits & TRAIT_COLD_RESIST != 0 { "C" } else { "-" };
-    let s = if traits & TRAIT_SEAFARING_TRAIT != 0 { "S" } else { "-" };
-    let t = if traits & TRAIT_COMMERCE != 0 { "T" } else { "-" };
-    let d = if traits & TRAIT_DISCIPLINE != 0 { "D" } else { "-" };
-    format!("{} {} {} {} {} {}", f, m, c, s, t, d)
+    let mut parts: Vec<&str> = Vec::new();
+    if traits & TRAIT_FLOOD_RESILIENCE != 0 { parts.push("氾濫"); }
+    if traits & TRAIT_MASONRY != 0 { parts.push("石工"); }
+    if traits & TRAIT_COLD_RESIST != 0 { parts.push("寒冷"); }
+    if traits & TRAIT_SEAFARING_TRAIT != 0 { parts.push("航海"); }
+    if traits & TRAIT_COMMERCE != 0 { parts.push("商業"); }
+    if traits & TRAIT_DISCIPLINE != 0 { parts.push("規律"); }
+    if parts.is_empty() { "なし".to_string() } else { parts.join("・") }
 }
 
 // ---- impl Continent (technology / parks / era / milestones) ---------------
@@ -170,7 +172,7 @@ impl Continent {
             if bit == 0 {
                 if self.settlements[si].traits & TRAIT_COMMERCE == 0 {
                     self.settlements[si].traits |= TRAIT_SEAFARING_TRAIT | TRAIT_COMMERCE;
-                    self.log_event(format!("Y{} {} grows rich on trade", year, "a coastal people"));
+                    self.log_event(format!("Y{} 沿岸の民が交易で富む", year));
                 }
                 continue;
             }
@@ -199,10 +201,10 @@ impl Continent {
             if self.tech_unlocked & bit == 0 {
                 self.tech_unlocked |= bit;
                 let msg = match bit {
-                    TECH_IRRIGATION => format!("Y{} they learn to channel the river", year),
-                    TECH_SEAFARING => format!("Y{} sailors set out across the sea", year),
-                    TECH_METALLURGY => format!("Y{} smiths forge metal in the hills", year),
-                    TECH_WRITING => format!("Y{} scribes begin to keep records", year),
+                    TECH_IRRIGATION => format!("Y{} 川を導く術を得る", year),
+                    TECH_SEAFARING => format!("Y{} 船出して海を渡る", year),
+                    TECH_METALLURGY => format!("Y{} 丘で金属を鍛える", year),
+                    TECH_WRITING => format!("Y{} 記録を残し始める", year),
                     _ => continue,
                 };
                 self.log_event(msg);
@@ -255,7 +257,7 @@ impl Continent {
                 self.settlements[si].traits |= TRAIT_DISCIPLINE;
             }
             let name = self.nations[ni].name.clone();
-            self.log_event(format!("Y{} years of war forge a disciplined people in {}", year, name));
+            self.log_event(format!("Y{} 戦が{}に規律を鍛える", year, name));
         }
 
         // ---- 3. Propagate settlement traits → nation.traits -----------------
@@ -285,14 +287,14 @@ impl Continent {
             let m = COUNT_MILESTONES[self.next_pop_milestone];
             self.next_pop_milestone += 1;
             let year = self.year;
-            self.log_event(format!("Y{} civilization spans {} towns", year, m));
+            self.log_event(format!("Y{} 文明が{}の町に広がる", year, m));
         }
 
         // (a) Era advance: log when the era changes.
         let era_now = self.current_era();
         if era_now != self.prev_era {
             let year = self.year;
-            self.log_event(format!("Y{} the world enters the {} age", year, era_now.label()));
+            self.log_event(format!("Y{} 世界は{}に入る", year, era_now.label_jp()));
             self.prev_era = era_now;
             self.era_changed = true;
         }
@@ -303,16 +305,18 @@ impl Continent {
             let dominant = self.nations.iter().any(|n| n.territory.len() >= threshold);
             if dominant {
                 self.unification_logged = true;
+                self.paused = true;
                 let year = self.year;
-                self.log_event(format!("Y{} one power dominates the known world", year));
+                self.log_event(format!("Y{} 一つの勢力が世界を支配する", year));
             }
         }
 
         // (c) Extinction: all settlements gone after having been populated.
         if !self.extinction_logged && self.settlements.is_empty() && self.year > 0 {
             self.extinction_logged = true;
+            self.paused = true;
             let year = self.year;
-            self.log_event(format!("Y{} the last people vanish from the world", year));
+            self.log_event(format!("Y{} 最後の民が世界から消える", year));
         }
     }
 }

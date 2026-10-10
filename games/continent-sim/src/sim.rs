@@ -6,8 +6,8 @@ use crate::*;
 /// When the buffer is full, the oldest sample is removed from the front.
 pub(crate) const HIST_CAP: usize = 128;
 
-pub(crate) const GROWTH_RATE: f32 = 0.06;
-pub(crate) const PRESSURE: f32 = 0.72;
+pub(crate) const GROWTH_RATE: f32 = 0.09;
+pub(crate) const PRESSURE: f32 = 0.40;
 pub(crate) const MIGRANT_FRAC: f32 = 0.32;
 pub(crate) const SEED_MIN_DIST: f32 = 9.0;
 pub(crate) const FAMINE_CHANCE: f32 = 0.012;
@@ -173,9 +173,9 @@ pub(crate) const WAR_POP_LOSS_DEFENDER: f32 = 0.75;
 
 /// Nation name pool (combined with a numeric suffix when exhausted).
 pub(crate) const NATION_NAMES: [&str; 16] = [
-    "Arath", "Belen", "Corvin", "Duren", "Elvar",
-    "Fendar", "Goreth", "Halvur", "Irenn", "Joral",
-    "Kaleth", "Loryn", "Morven", "Naral", "Orvyn", "Pelcar",
+    "アラ", "ベル", "コル", "デュア", "エル",
+    "フェン", "ゴル", "ハル", "イレ", "ジョル",
+    "カレ", "ロリ", "モル", "ナラ", "オル", "ペル",
 ];
 
 pub(crate) const NEIGHBORS8: [(i32, i32); 8] = [
@@ -487,7 +487,8 @@ impl Continent {
                 // Promotion check (any settlement regardless of river adjacency).
                 if self.settlements[i].prosper_years >= CITY_THRESHOLD && prosperous {
                     self.settlements[i].city = true;
-                    city_log.push(format!("Y{} a great city rises", year));
+                    let name = self.settlement_nation_name(i);
+                    city_log.push(format!("Y{} {}に大都市が興る", year, name));
                 }
             }
             for msg in city_log {
@@ -556,20 +557,20 @@ impl Continent {
                 if !self.river_city_logged && self.tile_near_river(best) {
                     self.river_city_logged = true;
                     let year = self.year;
-                    self.log_event(format!("Y{} a people settles the great river", year));
+                    self.log_event(format!("Y{} 大河のほとりに定住する", year));
                 }
             } else {
                 self.settlements[i].stuck += 1;
                 if saw_block && !self.stall_logged && self.settlements[i].stuck > 3 {
                     self.stall_logged = true;
                     let year = self.year;
-                    self.log_event(format!("Y{} mountains and seas halt the spread", year));
+                    self.log_event(format!("Y{} 山と海が広がりを止める", year));
                 }
                 if self.roll() < FAMINE_CHANCE {
                     self.settlements[i].pop *= 0.7;
                     if self.roll() < 0.25 {
                         let year = self.year;
-                        self.log_event(format!("Y{} famine thins a crowded town", year));
+                        self.log_event(format!("Y{} 飢饉が町を痩せさせる", year));
                     }
                 }
             }
@@ -661,11 +662,11 @@ impl Continent {
             if self.year % 50 == 25 || self.year % 100 == 0 {
                 let year = self.year;
                 let msg = if drift > 0.05 {
-                    format!("Y{} the climate warms, the frontier shifts", year)
+                    format!("Y{} 気候が暖かくなる", year)
                 } else if drift < -0.05 {
-                    format!("Y{} the climate cools, the frontier shifts", year)
+                    format!("Y{} 気候が冷える", year)
                 } else {
-                    format!("Y{} a mild season, the frontier holds", year)
+                    format!("Y{} 穏やかな季節が続く", year)
                 };
                 self.log_event(msg);
             }

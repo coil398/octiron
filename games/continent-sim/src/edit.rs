@@ -9,6 +9,26 @@ pub(crate) enum EditMode {
     Edit,
 }
 
+/// What a click does during play, before the hidden edit mode.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum GodTool {
+    Inspect,
+    Raise,
+    Grace,
+    Found,
+}
+
+impl GodTool {
+    pub(crate) fn label_jp(self) -> &'static str {
+        match self {
+            GodTool::Inspect => "調べる",
+            GodTool::Raise => "上げる",
+            GodTool::Grace => "恵み",
+            GodTool::Found => "建国",
+        }
+    }
+}
+
 /// What the brush currently does in Edit mode.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum EditTool {
@@ -68,9 +88,9 @@ impl Continent {
         }
         let year = self.year;
         self.log_event(format!(
-            "Y{} divine will reshapes a tile to {}",
+            "Y{} 神意が大地を{}にする",
             year,
-            new_terrain.tile_name()
+            new_terrain.tile_name_jp()
         ));
     }
 
@@ -117,7 +137,7 @@ impl Continent {
         let pop = self.settlements[si].pop;
         self.settlements[si].pop = (pop * 1.20).min(k);
         let year = self.year;
-        self.log_event(format!("Y{} divine grace blesses a settlement", year));
+        self.log_event(format!("Y{} 神の恵みが集落を祝福する", year));
     }
 
     /// Grants divine inspiration to the settlement on tile `i` (§6 Inspire).
@@ -135,7 +155,7 @@ impl Continent {
         let si = si as usize;
         self.settlements[si].inspired_years = 10;
         let year = self.year;
-        self.log_event(format!("Y{} divine inspiration stirs a people", year));
+        self.log_event(format!("Y{} 神の鼓舞が民を奮い立たせる", year));
     }
 
     /// Plants a new people on an unoccupied habitable tile (§6 Found).
@@ -169,7 +189,52 @@ impl Continent {
         // Extend nation_of so the new settlement has no nation yet (-1).
         self.nation_of.push(-1);
         let year = self.year;
-        self.log_event(format!("Y{} divine will plants a new people", year));
+        self.log_event(format!("Y{} 神意が新たな民を植える", year));
+    }
+
+    /// Shapes the continent from the start: sea becomes plains, a mountain
+    /// becomes hills, and other land gains carrying capacity.
+    pub(crate) fn god_raise(&mut self, i: usize) {
+        if i >= self.tiles.len() || self.faith < FAITH_COST_PAINT {
+            return;
+        }
+        let year = self.year;
+        let t = self.tiles[i].terrain;
+        if t.is_water() {
+            self.faith -= FAITH_COST_PAINT;
+            self.tiles[i].terrain = Terrain::Plains;
+            self.tiles[i].elevation = self.tiles[i].elevation.max(0.48);
+            let nbrs = self.neighbours(i);
+            self.recompute_tile_k(i);
+            for ni in nbrs {
+                self.recompute_tile_k(ni);
+            }
+            self.log_event(format!("Y{} 神は海を陸に上げた", year));
+        } else if t == Terrain::Mountain {
+            self.faith -= FAITH_COST_PAINT;
+            self.tiles[i].terrain = Terrain::Hills;
+            let nbrs = self.neighbours(i);
+            self.recompute_tile_k(i);
+            for ni in nbrs {
+                self.recompute_tile_k(ni);
+            }
+            self.log_event(format!("Y{} 神は山を丘陵にした", year));
+        } else {
+            self.faith -= FAITH_COST_PAINT;
+            let delta = ELEVATION_K_DELTA * K_MAX;
+            let old_k = self.tiles[i].k;
+            let new_k = (old_k + delta).clamp(0.0, K_MAX * 1.4);
+            let was_hab = self.tiles[i].habitable;
+            let now_hab = !t.is_water() && t != Terrain::Mountain && new_k >= MIN_HABITABLE;
+            self.tiles[i].k = new_k;
+            self.tiles[i].habitable = now_hab;
+            match (was_hab, now_hab) {
+                (false, true) => self.habitable_count += 1,
+                (true, false) => self.habitable_count = self.habitable_count.saturating_sub(1),
+                _ => {}
+            }
+            self.log_event(format!("Y{} 神は大地の実りを増やした", year));
+        }
     }
 
     /// Regen faith by FAITH_REGEN per simulated year.
@@ -207,45 +272,28 @@ impl Continent {
         };
     }
 
-    /// §6: draws the god intervention HUD strip just below the map area,
-    /// overlaid on the status bar when in EDIT mode.
+    /// One line of type along the bottom of the map. Observe mode draws nothing.
     pub(crate) fn draw_intervention_hud(&self, painter: &mut Painter) {
-        // HUD background bar.
-        let hud_y = MAP_Y + MAP_H - 20.0;
-        let hud_h = 20.0;
-
         if self.edit_mode == EditMode::Observe {
-            // Subtle label only.
-            self.pt(painter, MAP_X, hud_y + 4.0, 0.36, [0.40, 0.45, 0.55, 1.0],
-                "[M] 観察モード  -- M で編集モードへ");
             return;
         }
-
-        // Edit mode active.
-        painter.rect(MAP_X, hud_y, MAP_W, hud_h, [0.08, 0.10, 0.20, 0.88]);
-
-        // Faith bar (left side).
-        let bar_w = 120.0;
-        let faith_frac = (self.faith / FAITH_MAX).clamp(0.0, 1.0);
-        // Background.
-        painter.rect(MAP_X + 4.0, hud_y + 4.0, bar_w, 12.0, [0.20, 0.20, 0.30, 1.0]);
-        // Filled.
-        let bar_color = if self.faith < 10.0 {
-            [0.85, 0.25, 0.20, 1.0]
-        } else {
-            [0.50, 0.80, 1.00, 1.0]
-        };
-        painter.rect(MAP_X + 4.0, hud_y + 4.0, bar_w * faith_frac, 12.0, bar_color);
-        self.pt(painter, MAP_X + 4.0, hud_y + 4.0, 0.34, [1.0, 1.0, 1.0, 1.0],
-            &format!("信仰 {:.0}/{:.0}", self.faith, FAITH_MAX));
-
-        // Tool label (right of faith bar).
-        let tool_label = self.edit_tool.label_jp();
-        self.pt(painter, MAP_X + bar_w + 12.0, hud_y + 4.0, 0.36, [1.0, 0.90, 0.40, 1.0],
-            &format!("ツール: {}  [T] 次へ", tool_label));
-
-        // Mode label (far right).
-        self.pt(painter, MAP_X + bar_w + 240.0, hud_y + 4.0, 0.36, [0.55, 1.0, 0.55, 1.0],
-            "編集モード  [M] 観察");
+        let x = MAP_X + 16.0;
+        let y = MAP_Y + MAP_H - 28.0;
+        let w = MAP_W - 32.0;
+        painter.rect(x, y - 6.0, w, 26.0, [0.008, 0.010, 0.018, 0.55]);
+        let tool = self.edit_tool.label_jp();
+        self.tx(painter, x, y, 14.0, UI_GOLD, tool);
+        let mut ax = x + self.tx_w(painter, 14.0, tool) + 18.0;
+        self.tx(painter, ax, y, 13.0, UI_DIM, "信仰");
+        ax += self.tx_w(painter, 13.0, "信仰") + 8.0;
+        let frac = (self.faith / FAITH_MAX).clamp(0.0, 1.0);
+        painter.rect(ax, y + 6.0, 72.0, 2.0, UI_TRACK);
+        let bar_color = if self.faith < 10.0 { UI_RED } else { UI_DIM };
+        painter.rect(ax, y + 6.0, 72.0 * frac, 2.0, bar_color);
+        ax += 80.0;
+        self.tx(painter, ax, y, 13.0, UI_DIM, &format!("{:.0}", self.faith));
+        let back = "M で観察に戻る";
+        let bw = self.tx_w(painter, 13.0, back);
+        self.tx(painter, x + w - bw, y, 13.0, UI_DIM, back);
     }
 }

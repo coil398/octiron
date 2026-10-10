@@ -267,7 +267,7 @@ impl Continent {
                             "?".to_string()
                         };
                         log_msgs.push(format!(
-                            "Y{} {} absorbs its kin {}",
+                            "Y{} {}が{}を併合する",
                             year, winner_name, loser_name
                         ));
                     }
@@ -322,7 +322,7 @@ impl Continent {
                     // §8 event-flash: newly-founded nation capital.
                     self.push_flash(capital_tile);
                     log_msgs.push(format!(
-                        "Y{} the {} people unite under one banner",
+                        "Y{} {}の民が旗を掲げる",
                         year, name
                     ));
                 }
@@ -440,7 +440,7 @@ impl Continent {
                     let nation_name = self.nations[ni].name.clone();
                     self.nations[ni].capital = new_cap_tile;
                     log_msgs.push(format!(
-                        "Y{} the capital of {} falls; the realm splinters",
+                        "Y{} {}の都が落ち、国は裂ける",
                         year, nation_name
                     ));
                 }
@@ -504,7 +504,7 @@ impl Continent {
                     self.nations.push(new_nation);
 
                     log_msgs.push(format!(
-                        "Y{} {} fractures into two; {} breaks away",
+                        "Y{} {}が分裂し、{}が離反する",
                         year, old_name, new_name
                     ));
                 }
@@ -636,7 +636,7 @@ impl Continent {
             let new_golden = partner_counts[ni] >= 2 && !at_war_ids.contains(&nation.id);
             // Rising edge: false -> true, log once.
             if new_golden && !nation.golden {
-                golden_log.push(format!("Y{} {} enters a golden age", year, nation.name));
+                golden_log.push(format!("Y{} {}が黄金期に入る", year, nation.name));
                 // §8 event-flash: record capital for flash (pushed after iter ends).
                 golden_capitals.push(nation.capital);
             }
@@ -779,7 +779,7 @@ impl Continent {
                 // (harmlessly via entry().or_insert) and handle pop loss.
                 self.apply_disaster(DisasterKind::Plague, tgt_tile);
                 spread_log.push(format!(
-                    "Y{} plague spreads along the trade roads to {}",
+                    "Y{} 疫病が交易路を伝い{}へ",
                     year_now2, sc.tgt_name
                 ));
             }

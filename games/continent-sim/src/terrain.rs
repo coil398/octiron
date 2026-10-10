@@ -261,6 +261,44 @@ impl Scenario {
         }
     }
 
+    /// One line shown on the setup screen. Matches the knobs below.
+    pub(crate) fn blurb_jp(self) -> &'static str {
+        match self {
+            Scenario::Standard => "温帯の大陸。海と山と川が歴史を分ける。",
+            Scenario::Pangaea => "一つの大きな陸。部族が多く、国がぶつかりやすい。",
+            Scenario::Archipelago => "高い海面。島々に分かれた少数の民。",
+            Scenario::Highlands => "丘と山が多い。平地の回廊が狭い。",
+            Scenario::Arid => "砂漠が広い。水辺だけが人を養い、干ばつが多い。",
+            Scenario::IceAge => "寒い。ツンドラが南へ広がり、噴火は少ない。",
+            Scenario::Volcanic => "山脈が多く、噴火が三倍起こる。",
+            Scenario::Lush => "低い海面と肥沃な低地。気候は少し暖かい。",
+        }
+    }
+
+    pub(crate) fn climate_bias(self) -> f32 {
+        match self {
+            Scenario::IceAge => -0.16,
+            Scenario::Lush => 0.06,
+            Scenario::Arid => -0.02,
+            _ => 0.0,
+        }
+    }
+
+    pub(crate) fn volcano_mul(self) -> f32 {
+        match self {
+            Scenario::Volcanic => 3.0,
+            Scenario::IceAge => 0.4,
+            _ => 1.0,
+        }
+    }
+
+    pub(crate) fn drought_mul(self) -> f32 {
+        match self {
+            Scenario::Arid => 2.0,
+            _ => 1.0,
+        }
+    }
+
     pub(crate) fn params(self) -> ScenarioParams {
         match self {
             Scenario::Standard => ScenarioParams {
@@ -375,7 +413,7 @@ impl Continent {
                 let i = idx(col, row);
                 elevation[i] = (e * mask).clamp(0.0, 1.0);
                 moisture[i] = m;
-                climate[i] = 0.18 + 0.82 * band;
+                climate[i] = (0.18 + 0.82 * band + self.scenario.climate_bias()).clamp(0.05, 1.0);
             }
         }
 
@@ -535,6 +573,7 @@ impl Continent {
         // §6: reset edit mode on new world
         self.edit_mode = EditMode::Observe;
         self.edit_tool = EditTool::PaintTerrain;
+        self.god_tool = GodTool::Raise;
         self.faith = FAITH_MAX;
         self.faith_accum = 0.0;
         self.hovered_tile = None;
@@ -580,7 +619,7 @@ impl Continent {
             self.occupied[i] = si;
             self.settlements.push(Settlement {
                 tile: i,
-                pop: 25.0,
+                pop: 100.0,
                 stuck: 0,
                 at_cap_years: 0,
                 prosper_years: 0,
@@ -621,6 +660,6 @@ impl Continent {
         }
 
         let founded = self.settlements.len();
-        self.log_event(format!("Y0 {} tribes take root", founded));
+        self.log_event(format!("Y0 {}の民が根を下ろす", founded));
     }
 }

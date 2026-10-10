@@ -145,7 +145,10 @@ impl Painter {
         for ch in text.chars() {
             let cached = match atlas.get_or_insert(&font.ab, ch, px_size) {
                 Some(g) => g,
-                None => continue,
+                None => {
+                    cursor_x += px_size * 0.33;
+                    continue;
+                }
             };
             if cached.px_w > 0.0 && cached.px_h > 0.0 {
                 let atlas_dim = atlas.dim as f32;
@@ -181,8 +184,12 @@ impl Painter {
             None => return 0.0,
         };
         text.chars()
-            .filter_map(|ch| atlas.get_or_insert(&font.ab, ch, px_size))
-            .map(|g| g.advance)
+            .map(|ch| {
+                atlas
+                    .get_or_insert(&font.ab, ch, px_size)
+                    .map(|g| g.advance)
+                    .unwrap_or(px_size * 0.33)
+            })
             .sum()
     }
 }
